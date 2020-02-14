@@ -1,3 +1,16 @@
+# Test
+
+``` diff
+diff --git a/filea.extension b/fileb.extension
+index d28nd309d..b3nu834uj 111111
+--- a/filea.extension
++++ b/fileb.extension
+@@ -1,6 +1,6 @@
+-oldLine
++newLine
+```
+
+
 # Flax: A neural network library for JAX designed for flexibility
 
 **NOTE**: This is pre-release software and not yet ready for general use. If you want to use it, please get in touch with us at flax-dev@google.com.
