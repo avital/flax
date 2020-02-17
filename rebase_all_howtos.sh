@@ -11,4 +11,4 @@ for howto_branch in $(git branch | grep "${howto_prefix}"); do
   git rebase "${main_branch}" "${howto_branch}"
 done
 
-git push --all origin --force-with-leash
+git push --all origin --force-with-lease
