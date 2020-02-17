@@ -9,5 +9,5 @@ howto_prefix="howto-"
 git checkout "${main_branch}"
 for howto_branch in $(git branch | grep "${howto_prefix}"); do
   git rebase "${main_branch}" "${howto_branch}"
-  git merge "${howto_branch}"
+  git merge "git${howto_branch}"
 done
