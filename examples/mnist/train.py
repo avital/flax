@@ -167,7 +167,7 @@ def train_epoch(optimizer, base_model, train_ds, batch_size, epoch):
   logging.info('train epoch: %d, loss: %.4f, accuracy: %.2f', epoch,
                epoch_metrics_np['loss'], epoch_metrics_np['accuracy'] * 100)
 
-  return optimizer
+  return optimizer, epoch_metrics_np
 
 def eval_model(model, base_model, test_ds):
   metrics = eval_step(model, base_model, test_ds)
