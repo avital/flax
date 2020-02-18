@@ -152,22 +152,37 @@ class CNN(nn.Module):
 
   def apply(self, x):
     x = nn.Conv(x, features=32, kernel_size=(3, 3))
-    x = nn.relu(x)
+    x = jax.nn.relu(x)
     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
     x = nn.Conv(x, features=64, kernel_size=(3, 3))
-    x = nn.relu(x)
+    x = jax.nn.relu(x)
     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
     x = x.reshape((x.shape[0], -1))  # flatten
-    x = nn.Dense(x, features=256)
-    x = nn.relu(x)
+    x = nn.Dense(x, features=256, name='representation')
+    x = jax.nn.relu(x)
+    penultimate_layer = x
     x = nn.Dense(x, features=10)
-    x = nn.log_softmax(x)
+    x = jax.nn.log_softmax(x)
+    return x, penultimate_layer
+
+
+class RefineCNN(nn.Module):
+  """Refine CNN Model."""
+
+  def apply(self, x):
+    x = nn.Dense(x, features=64)
+    x = jax.nn.relu(x)
+    x = nn.Dense(x, features=10, name='final')
+    x = jax.nn.log_softmax(x)
     return x
 
 
 def create_model(key):
-  _, model = CNN.create_by_shape(key, [((1, 28, 28, 1), jnp.float32)])
-  return model
+  model_def = CNN()
+  _, model = model_def.create_by_shape(key, [((1, 28, 28, 1), jnp.float32)])
+  refine_def = RefineCNN()
+  _, refine_model = refine_def.create_by_shape(key, [((1, 256), jnp.float32)])
+  return model, refine_model
 
 
 def create_optimizer(model, learning_rate, beta):
@@ -199,7 +214,8 @@ def compute_metrics(logits, labels):
 def train_step(optimizer, batch):
   """Train for a single step."""
   def loss_fn(model):
-    logits = model(batch['image'])
+    _, base_representation = base_model(batch['image'])
+    logits = model(base_representation)
     loss = cross_entropy_loss(logits, batch['label'])
     return loss, logits
   optimizer, _, logits = optimizer.optimize(loss_fn)
@@ -218,7 +234,7 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
   train_ds_size = len(train_ds['image'])
   steps_per_epoch = train_ds_size // batch_size
 
-  perms = rng.permutation(len(train_ds['image']))
+  perms = onp.random.permutation(len(train_ds['image']))
   perms = perms[:steps_per_epoch * batch_size]  # skip incomplete batch
   perms = perms.reshape((steps_per_epoch, batch_size))
   batch_metrics = []
@@ -238,6 +254,7 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
 
   return optimizer, epoch_metrics_np
 
+  return optimizer, epoch_metrics_np
 
 def eval_model(model, test_ds):
   metrics = eval_step(model, test_ds)
