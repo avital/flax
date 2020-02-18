@@ -1,0 +1,144 @@
+# Distributed Training (HOWTO)
+
+This howto changes the MNIST example from single-device training to multi-device
+training on a single host. The evaluation is still performed on a single device. 
+
+Note the code does not support multi-host distributed training.
+
+([Full diff view](https://github.com/marcvanzee/flax/compare/prerelease..howto-distributed-training?diff=split))
+```diff
+diff --git a/examples/mnist/train.py b/examples/mnist/train.py
+index 020838b..da791d5 100644
+--- a/examples/mnist/train.py
++++ b/examples/mnist/train.py
+@@ -17,6 +17,8 @@ This script trains a simple Convolutional Neural Net on the MNIST dataset.
+ The data is loaded using tensorflow_datasets.
+ """
+ 
++import functools
++
+ from absl import app
+ from absl import flags
+ from absl import logging
+@@ -25,6 +27,7 @@ from flax import nn
+ from flax import optim
+ 
+ import jax
++from jax import lax
+ from jax import random
+ 
+ import jax.numpy as jnp
+@@ -45,8 +48,8 @@ flags.DEFINE_float(
+     help=('The decay rate used for the momentum optimizer.'))
+ 
+ flags.DEFINE_integer(
+-    'batch_size', default=128,
+-    help=('Batch size for training.'))
++    'batch_size', default=128 * 8,
++    help=('Batch size for distributed single-host training.'))
+ 
+ flags.DEFINE_integer(
+     'num_epochs', default=10,
+@@ -86,6 +89,7 @@ def create_model(key):
+ def create_optimizer(model, learning_rate, beta):
+   optimizer_def = optim.Momentum(learning_rate=learning_rate, beta=beta)
+   optimizer = optimizer_def.create(model)
++  optimizer = optimizer.replicate()
+   return optimizer
+ 
+ 
+@@ -98,17 +102,35 @@ def cross_entropy_loss(logits, labels):
+   return -jnp.mean(jnp.sum(onehot(labels) * logits, axis=-1))
+ 
+ 
+-def compute_metrics(logits, labels):
++def shard(xs, device_count):
++  """Shards xs among device_count."""
++  return jax.tree_map(
++      lambda x: x.reshape((device_count, -1) + x.shape[1:]), xs)
++
++
++def device_get_first(xs):
++  return jax.device_get(jax.tree_map(lambda x: x[0], xs))
++
++
++def pmean(tree, axis_name='batch'):
++  device_count = lax.psum(1., axis_name)
++  return jax.tree_map(
++      lambda x: lax.psum(x, axis_name) / device_count, tree)
++
++
++def compute_metrics(logits, labels, sharded):
+   loss = cross_entropy_loss(logits, labels)
+   accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
+   metrics = {
+       'loss': loss,
+       'accuracy': accuracy,
+   }
++  if sharded:
++    metrics = pmean(metrics)
+   return metrics
+ 
+ 
+-@jax.jit
++@functools.partial(jax.pmap, axis_name='batch')
+ def train_step(optimizer, batch):
+   """Train for a single step."""
+   def loss_fn(model):
+@@ -116,18 +138,21 @@ def train_step(optimizer, batch):
+     loss = cross_entropy_loss(logits, batch['label'])
+     return loss, logits
+   optimizer, _, logits = optimizer.optimize(loss_fn)
+-  metrics = compute_metrics(logits, batch['label'])
++  metrics = compute_metrics(logits, batch['label'], sharded=True)
+   return optimizer, metrics
+ 
+ 
+ @jax.jit
+ def eval_step(model, batch):
+   logits = model(batch['image'])
+-  return compute_metrics(logits, batch['label'])
++  return compute_metrics(logits, batch['label'], sharded=False)
+ 
+ 
+-def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
++def train_epoch(optimizer, train_ds, batch_size, epoch, device_count):
+   """Train for a single epoch."""
++  if batch_size % device_count > 0:
++    raise ValueError('Batch size must be divisible by the number of devices')
++
+   train_ds_size = len(train_ds['image'])
+   steps_per_epoch = train_ds_size // batch_size
+ 
+@@ -137,6 +162,9 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
+   batch_metrics = []
+   for perm in perms:
+     batch = {k: v[perm] for k, v in train_ds.items()}
++    batch = shard(batch, device_count)
++    # All arguments passed to train_step need to have an additional axis
++    # at the beginning, whose size is equal to count_devices.
+     optimizer, metrics = train_step(optimizer, batch)
+     batch_metrics.append(metrics)
+ 
+@@ -172,6 +200,7 @@ def train(train_ds, test_ds):
+ 
+   batch_size = FLAGS.batch_size
+   num_epochs = FLAGS.num_epochs
++  device_count = jax.device_count()
+ 
+   model = create_model(rng)
+   optimizer = create_optimizer(model, FLAGS.learning_rate, FLAGS.momentum)
+@@ -180,8 +209,10 @@ def train(train_ds, test_ds):
+ 
+   for epoch in range(1, num_epochs + 1):
+     optimizer, _ = train_epoch(
+-        optimizer, train_ds, batch_size, epoch, input_rng)
+-    loss, accuracy = eval_model(optimizer.target, test_ds)
++        optimizer, train_ds, batch_size, epoch, input_rng, device_count)
++    # Fetch optimizers from devices, and pick the first (they are all the same)
++    optimizer_target = device_get_first(optimizer.target)
++    loss, accuracy = eval_model(optimizer_target, test_ds)
+     logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
+                  epoch, loss, accuracy * 100)
+   return optimizer
+```
