@@ -110,6 +110,8 @@ def generate_markdown_recursively():
     for filename in files:
       if not filename.endswith(FLAGS.input_suffix):
         continue
+      if FLAGS.exclude_tests and filename.endswith('_test.py'):
+        continue
       input_path = os.path.join(root, filename)
       output_path = prepare_output_path(root, filename)
       with open(output_path, 'w', encoding='utf8') as f:

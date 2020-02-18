@@ -3,6 +3,9 @@
 # generating the Markdown files, to avoid unrelated changes in the main branch 
 # to show up in the HOWTO diffs.
 
+# Exit on any error.
+set -e
+
 main_branch="prerelease"
 howto_prefix="howto-"
 
