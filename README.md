@@ -103,7 +103,6 @@ with detailed annotations for each code block.
 This script trains a simple Convolutional Neural Net on the MNIST dataset.
 The data is loaded using tensorflow_datasets.
 """
-import functools
 
 from absl import app
 from absl import flags
@@ -171,11 +170,9 @@ def create_model(key):
   return model
 
 
-@jax.pmap
-def create_optimizers(rng):
-  optimizer_def = optim.Momentum(
-      learning_rate=FLAGS.learning_rate, beta=FLAGS.momentum)
-  optimizer = optimizer_def.create(create_model(rng))
+def create_optimizer(model, learning_rate, beta):
+  optimizer_def = optim.Momentum(learning_rate=learning_rate, beta=beta)
+  optimizer = optimizer_def.create(model)
   return optimizer
 
 
@@ -198,7 +195,7 @@ def compute_metrics(logits, labels):
   return metrics
 
 
-@functools.partial(jax.pmap)
+@jax.jit
 def train_step(optimizer, batch):
   """Train for a single step."""
   def loss_fn(model):
@@ -210,17 +207,13 @@ def train_step(optimizer, batch):
   return optimizer, metrics
 
 
-@jax.pmap
+@jax.jit
 def eval_step(model, batch):
   logits = model(batch['image'])
   return compute_metrics(logits, batch['label'])
 
 
-def replicate(tree_obj, num_replicas):
-  return jax.tree_map(lambda x: onp.array([x] * num_replicas), tree_obj)
-
-
-def train_epoch(optimizers, train_ds, batch_size, epoch, rng, num_models):
+def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
   """Train for a single epoch."""
   train_ds_size = len(train_ds['image'])
   steps_per_epoch = train_ds_size // batch_size
@@ -231,27 +224,25 @@ def train_epoch(optimizers, train_ds, batch_size, epoch, rng, num_models):
   batch_metrics = []
   for perm in perms:
     batch = {k: v[perm] for k, v in train_ds.items()}
-    batch = replicate(batch, num_models)
-    optimizers, metrics = train_step(optimizers, batch)
+    optimizer, metrics = train_step(optimizer, batch)
     batch_metrics.append(metrics)
 
   # compute mean of metrics across each batch in epoch.
   batch_metrics_np = jax.device_get(batch_metrics)
-  batch_metrics_np = jax.tree_multimap(lambda *xs: onp.array(xs),
-                                       *batch_metrics_np)
   epoch_metrics_np = {
-      k: onp.mean(batch_metrics_np[k], axis=0) for k in batch_metrics_np
-  }
-  logging.info('train epoch: %d, loss: %s, accuracy: %s', epoch,
+      k: onp.mean([metrics[k] for metrics in batch_metrics_np])
+      for k in batch_metrics_np[0]}
+
+  logging.info('train epoch: %d, loss: %.4f, accuracy: %.2f', epoch,
                epoch_metrics_np['loss'], epoch_metrics_np['accuracy'] * 100)
 
-  return optimizers, epoch_metrics_np
+  return optimizer, epoch_metrics_np
 
 
-def eval_model(models, test_ds):
-  metrics = eval_step(models, test_ds)
+def eval_model(model, test_ds):
+  metrics = eval_step(model, test_ds)
   metrics = jax.device_get(metrics)
-  summary = metrics
+  summary = jax.tree_map(lambda x: x.item(), metrics)
   return summary['loss'], summary['accuracy']
 
 
@@ -268,20 +259,19 @@ def train(train_ds, test_ds):
 
   batch_size = FLAGS.batch_size
   num_epochs = FLAGS.num_epochs
-  num_models = jax.device_count()
 
-  optimizers = create_optimizers(random.split(rng, num_models))
+  model = create_model(rng)
+  optimizer = create_optimizer(model, FLAGS.learning_rate, FLAGS.momentum)
 
   input_rng = onp.random.RandomState(0)
-  test_ds = replicate(test_ds, num_models)
 
   for epoch in range(1, num_epochs + 1):
-    optimizers, _ = train_epoch(optimizers, train_ds, batch_size, epoch,
-                                input_rng, num_models)
-    loss, accuracy = eval_model(optimizers.target, test_ds)
-    logging.info('eval epoch: %d, loss: %s, accuracy: %s', epoch, loss,
-                 accuracy * 100)
-  return optimizers
+    optimizer, _ = train_epoch(
+        optimizer, train_ds, batch_size, epoch, input_rng)
+    loss, accuracy = eval_model(optimizer.target, test_ds)
+    logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
+                 epoch, loss, accuracy * 100)
+  return optimizer
 
 
 def main(_):
@@ -315,43 +305,80 @@ an exponential moving average of parameters over the course of training.
 
 Note that no special framework support was needed.
 
-([Link to diff view](https://github.com/marcvanzee/flax/compare/prerelease..howto-polyak-averaging?diff=split)
+([Full diff view](https://github.com/marcvanzee/flax/compare/prerelease..howto-polyak-averaging?diff=split))
 ```diff
 diff --git a/examples/mnist/train.py b/examples/mnist/train.py
-index 00a4017..8bce71f 100644
+index 020838b..46eaab2 100644
 --- a/examples/mnist/train.py
 +++ b/examples/mnist/train.py
-@@ -12,7 +12,7 @@
- # See the License for the specific language governing permissions and
- # limitations under the License.
- 
--
-+# POLYAK DIFF
+@@ -109,15 +109,19 @@ def compute_metrics(logits, labels):
  
  
- """MNIST example.
-diff --git a/markdown_generation/generate_markdown.py b/markdown_generation/generate_markdown.py
-index 3493a3b..41cd760 100644
---- a/markdown_generation/generate_markdown.py
-+++ b/markdown_generation/generate_markdown.py
-@@ -44,7 +44,7 @@ flags.DEFINE_string('output_suffix', '.md',
-                     'Markdown file.')
+ @jax.jit
+-def train_step(optimizer, batch):
++def train_step(optimizer, params_ema, batch):
+   """Train for a single step."""
+   def loss_fn(model):
+     logits = model(batch['image'])
+     loss = cross_entropy_loss(logits, batch['label'])
+     return loss, logits
+   optimizer, _, logits = optimizer.optimize(loss_fn)
++  params_ema = jax.tree_multimap(
++      lambda p_ema, p: p_ema * 0.99 + p * 0.01,
++      params_ema, optimizer.target.params)
++
+   metrics = compute_metrics(logits, batch['label'])
+-  return optimizer, metrics
++  return optimizer, params_ema, metrics
  
- flags.DEFINE_bool('exclude_tests', True, 'If true, do not show test files in '
--                   'diffs.')
-+                  'diffs.')
+ 
+ @jax.jit
+@@ -126,18 +130,18 @@ def eval_step(model, batch):
+   return compute_metrics(logits, batch['label'])
  
  
- def wrap_in_code(lines, lang):
-@@ -110,6 +110,8 @@ def generate_markdown_recursively():
-     for filename in files:
-       if not filename.endswith(FLAGS.input_suffix):
-         continue
-+      if FLAGS.exclude_tests and filename.endswith('_test.py'):
-+        continue
-       input_path = os.path.join(root, filename)
-       output_path = prepare_output_path(root, filename)
-       with open(output_path, 'w', encoding='utf8') as f:
+-def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
++def train_epoch(optimizer, params_ema, train_ds, batch_size, epoch):
+   """Train for a single epoch."""
+   train_ds_size = len(train_ds['image'])
+   steps_per_epoch = train_ds_size // batch_size
+ 
+-  perms = rng.permutation(len(train_ds['image']))
++  perms = onp.random.permutation(len(train_ds['image']))
+   perms = perms[:steps_per_epoch * batch_size]  # skip incomplete batch
+   perms = perms.reshape((steps_per_epoch, batch_size))
+   batch_metrics = []
+   for perm in perms:
+     batch = {k: v[perm] for k, v in train_ds.items()}
+-    optimizer, metrics = train_step(optimizer, batch)
++    optimizer, params_ema, metrics = train_step(optimizer, params_ema, batch)
+     batch_metrics.append(metrics)
+ 
+   # compute mean of metrics across each batch in epoch.
+@@ -175,15 +179,22 @@ def train(train_ds, test_ds):
+ 
+   model = create_model(rng)
+   optimizer = create_optimizer(model, FLAGS.learning_rate, FLAGS.momentum)
++  params_ema = model.params
+ 
+   input_rng = onp.random.RandomState(0)
+ 
+   for epoch in range(1, num_epochs + 1):
+     optimizer, _ = train_epoch(
+-        optimizer, train_ds, batch_size, epoch, input_rng)
++        optimizer, params_ema, train_ds, batch_size, epoch, input_rng)
+     loss, accuracy = eval_model(optimizer.target, test_ds)
+     logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
+                  epoch, loss, accuracy * 100)
++
++    model_ema = optimizer.target.replace(params=params_ema)
++    polyak_loss, polyak_accuracy = eval_model(model_ema, test_ds)
++    logging.info('polyak eval epoch: %d, loss: %.4f, accuracy: %.2f',
++                 epoch, polyak_loss, polyak_accuracy * 100)
++
+   return optimizer
+ 
+ 
 ```
 
 ## Getting involved

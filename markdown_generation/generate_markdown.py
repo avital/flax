@@ -61,7 +61,7 @@ def insert_branch_diff_fn(target_branch, source_branch='prerelease'):
   diff_text = git.diff(source_branch, target_branch, '--', ':(exclude)*.md')
   diff_text = wrap_in_code(diff_text.split('\n'), 'diff')
   url = get_diff_header(source_branch, target_branch)
-  return [f'([Link to diff view]({url})'] + diff_text
+  return [f'([Full diff view]({url}))'] + diff_text
 
 
 def insert_py_code_fn(file_path, lang='py'):
