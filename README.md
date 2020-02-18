@@ -211,7 +211,7 @@ def compute_metrics(logits, labels):
 
 
 @jax.jit
-def train_step(optimizer, batch):
+def train_step(optimizer, base_model, batch):
   """Train for a single step."""
   def loss_fn(model):
     _, base_representation = base_model(batch['image'])
@@ -224,12 +224,14 @@ def train_step(optimizer, batch):
 
 
 @jax.jit
-def eval_step(model, batch):
-  logits = model(batch['image'])
+def eval_step(model, base_model, batch):
+  _, base_representation = base_model(batch['image'])
+  logits = model(base_representation)
   return compute_metrics(logits, batch['label'])
 
 
-def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
+
+def train_epoch(optimizer, base_model, train_ds, batch_size, epoch):
   """Train for a single epoch."""
   train_ds_size = len(train_ds['image'])
   steps_per_epoch = train_ds_size // batch_size
@@ -240,7 +242,7 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
   batch_metrics = []
   for perm in perms:
     batch = {k: v[perm] for k, v in train_ds.items()}
-    optimizer, metrics = train_step(optimizer, batch)
+    optimizer, metrics = train_step(optimizer, base_model, batch)
     batch_metrics.append(metrics)
 
   # compute mean of metrics across each batch in epoch.
@@ -254,10 +256,8 @@ def train_epoch(optimizer, train_ds, batch_size, epoch, rng):
 
   return optimizer, epoch_metrics_np
 
-  return optimizer, epoch_metrics_np
-
-def eval_model(model, test_ds):
-  metrics = eval_step(model, test_ds)
+def eval_model(model, base_model, test_ds):
+  metrics = eval_step(model, base_model, test_ds)
   metrics = jax.device_get(metrics)
   summary = jax.tree_map(lambda x: x.item(), metrics)
   return summary['loss'], summary['accuracy']
@@ -277,18 +277,27 @@ def train(train_ds, test_ds):
   batch_size = FLAGS.batch_size
   num_epochs = FLAGS.num_epochs
 
-  model = create_model(rng)
-  optimizer = create_optimizer(model, FLAGS.learning_rate, FLAGS.momentum)
+  base_model, refine_model = create_model(rng)
+  optimizer = create_optimizer(refine_model,
+                               FLAGS.learning_rate, FLAGS.momentum)
 
-  input_rng = onp.random.RandomState(0)
+  print('Base model weights:')
+  print(base_model.params['representation']['kernel'][0:5, 0:5])
+  print('Refine model weights:')
+  print(refine_model.params['final']['kernel'][0:5, 0:5])
 
   for epoch in range(1, num_epochs + 1):
-    optimizer, _ = train_epoch(
-        optimizer, train_ds, batch_size, epoch, input_rng)
-    loss, accuracy = eval_model(optimizer.target, test_ds)
+    optimizer = train_epoch(optimizer, base_model, train_ds, batch_size, epoch)
+    loss, accuracy = eval_model(optimizer.target, base_model, test_ds)
     logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
                  epoch, loss, accuracy * 100)
-  return optimizer
+
+  refine_model = optimizer.target
+  print('Base model weights should be the same:')
+  print(base_model.params['representation']['kernel'][0:5, 0:5])
+  print('Refine model weights should be changed:')
+  print(refine_model.params['final']['kernel'][0:5, 0:5])
+  print('-----')
 
 
 def main(_):
