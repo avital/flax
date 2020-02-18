@@ -9,9 +9,9 @@ set -e
 main_branch="prerelease"
 howto_prefix="howto-"
 
-git checkout "${main_branch}"
 for howto_branch in $(git branch | grep "${howto_prefix}"); do
   git rebase "${main_branch}" "${howto_branch}"
 done
 
+git checkout "${main_branch}"
 git push --all origin --force-with-lease
