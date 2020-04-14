@@ -226,22 +226,68 @@ class MiniDense2(MiniModule2):
 # ====
 
 class MiniModule3:
-  def with_parent(self, parent, name):
-    # xcxc destructive
-    WithParent.__init__(self, parent, name)
-    self.params = lambda: WithParent.params(self)
+  def with_params(self, params):
+    # xcxc destructive, and just plain weird.
+    self.params = params
     return self
 
-  def with_params(self, params):
-    # xcxc destructive
-    TopLevelParams.__init__(self, params)
-    self.params = lambda: TopLevelParams.params(self)
-    return self
+
+
+class DynamicVar:
+  def __init__(self):
+    # xcxc make this thread-safe
+    self._val = None
+
+  def peek(self):
+    return self._val
+
+  def get(self):
+    if self._val is None:
+      raise ValueError("Must run within a `with dynamic_var.let:` block")
+    else:
+      return val
+
+  @contextlib.contextmanager
+  def let(self, val):
+    assert val is not None
+    old_val = self._val
+    self._val = val
+    yield
+    self._val = old_val
 
 
 class WithParams(MiniModule3):
+  _parent = DynamicVar()
+
+  # unfortunate a Union of two bits of functionality:
+  # 1/ a module that holds params
+  # 2/ a module that has a parent
+  # 
+  # but it's better than mucking more into multiple subclasses
+  # / trying to implement mixins.
+  def __init__(self):
+    self.params = None
+
+  def let_parent(parent):
+    WithParams._parent.let(parent)
+
+  def parent(self):
+    parent = self._parent.get()
+
+    if not hasattr(parent, 'children'):
+      # xcxc check duplicate names
+      parent.children = {}
+    parent.children[self.name] = self
+
   def params(self):
-    raise ValueError("implement this")
+    if self.params:
+      assert self._parent.peek() is not None
+      return self.params
+    else:
+      parent_params = self.parent().params()
+      if not self.name in parent_params:
+        parent_params[self.name] = {}
+      return parent_params[self.name]
 
   def init_param(self, name, shape, init_fn):
     params = self.params()
@@ -255,51 +301,23 @@ class WithParams(MiniModule3):
     return self.params()[name]
 
 
-class TopLevelParams(MiniModule3):
-  def __init__(self, params):
-    self._params = params
-
-  def params(self):
-    return self._params
-
-class WithParent(MiniModule3):
-  def __init__(self, parent, name):
-    self.parent = parent
-    self.name = name
-    if not hasattr(self.parent, 'children'):
-      # xcxc check duplicate names
-      self.parent.children = {}
-    self.parent.children[name] = self
-
-  def params(self):
-    parent_params = self.parent.params()
-    if not self.name in parent_params:
-      parent_params[self.name] = {}
-    return parent_params[self.name]
-
-
 class JointInitApply(WithParams):
   ExecutionMode = enum.Enum('ExecutionMode', 'INIT APPLY')
   # xcxc thread-safe
-  execution_mode = None
+  execution_mode = DynamicVar()
 
   def param(self, name, shape, init_fn):
-    if self.execution_mode == self.ExecutionMode.INIT:
+    if self.execution_mode.get() == self.ExecutionMode.INIT:
       return self.init_param(name, shape, init_fn)
-    elif self.execution_mode == self.ExecutionMode.APPLY:
+    elif self.execution_mode.get() == self.ExecutionMode.APPLY:
       return self.get_param(name)
     else:
-      raise ValueError(f"Unexpected execution mode {JointInitApply.execution_mode}")
+      assert False, self.execution_model.get()
 
   @staticmethod
   @contextlib.contextmanager
   def mode(execution_mode):
-    assert JointInitApply.execution_mode is None
-    JointInitApply.execution_mode = execution_mode
-    try:
-      yield
-    finally:
-      JointInitApply.execution_mode = None
+    execution_mode.let(execution_mode)
 
 
 @dataclass
@@ -307,6 +325,7 @@ class MiniDense3(JointInitApply):
   features: int
   kernel_init: Callable = initializers.lecun_normal()
   bias_init: Callable = initializers.zeros
+  name: String = None
 
   def __call__(self, x):
     """Applies a linear transformation to the inputs along the last dimension."""
@@ -359,6 +378,47 @@ def mlp_v2_initial_params():
     l1p, _ = mlp(np.random.uniform((4, 1)))  # (BATCH, IN_FEATURES)
     return mlp.params(), l1p
 
+class MLPv3(JointInitApply):
+  def __call__(self, x):
+    with WithParent.set(self):
+      layer1 = MiniDense3(features=2, name="dense1")
+      x = layer1(x)
+      x = jax.nn.relu(x)
+      x = MiniDense3(features=2, name="dense2")(x)
+      return layer1.params(), x
 
+def mlp_v3_initial_params():
+  with JointInitApply.init() as init_params:
+    mlp = MLPv3().with_params({})
+    l1p, _ = mlp(np.random.uniform((4, 1)))  # (BATCH, IN_FEATURES)
+    return mlp.params(), l1p
 
-# NEXT TODO: make a wrapper that automatically invokes with_parent somehow...
+# the below doesn't work yet but it could, and it's not too far
+
+class MLPv4(JointInitApply):
+  @modulemethod
+  def __call__(self, x):
+    layer1 = MiniDense3(features=2, name="dense1")
+    x = layer1(x)
+    x = jax.nn.relu(x)
+    x = MiniDense3(features=2, name="dense2")(x)
+    return layer1.params(), x
+
+def mlp_v4_initial_params():
+  with JointInitApply.mode(JointInitApply.ExecutionMode.INIT):
+    mlp = MLPv3().with_params({})
+    l1p, _ = mlp(np.random.uniform((4, 1)))  # (BATCH, IN_FEATURES)
+    return mlp.params(), l1p
+
+def mlp_v4_simple_initial_params():
+  # special cases to wrapping __init__ in a context manager
+  MLPv3().init(jax.random.PRNGKey(0))
+
+def mlp_v4_simple_initial_params(x):
+  # special cases to wrapping __init__ in a context manager
+  with JointInitApply.init(prng_key=jax.random.PRNGKey(0)) as init_params:
+    return MLPv3()(x)
+
+def mlp_v4_simple_use_params(x):
+  # special cases to wrapping __init__ in a context manager
+  MLPv3().with_params(params)(x)
