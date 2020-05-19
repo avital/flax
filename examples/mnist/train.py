@@ -117,8 +117,8 @@ def train_step(optimizer, batch):
 
 
 @jax.jit
-def eval_step(model, batch):
-  logits = model(batch['image'])
+def eval_step(params, batch):
+  logits = nn.apply(cnn, params, batch['image'])
   return compute_metrics(logits, batch['label'])
 
 

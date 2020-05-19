@@ -204,6 +204,7 @@ class Conv(base.Module):
     self.kernel_init = kernel_init
     self.bias_init = bias_init
 
+  @base.method
   def __call__(self, inputs):
     """Applies a convolution to the inputs.
 
