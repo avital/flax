@@ -285,13 +285,14 @@ class MultiHeadDotProductAttention(base.Module):
         'Memory dimension must be divisible by number of heads.')
     head_dim = qkv_features // num_heads
 
-    dense = DenseGeneral.partial(
-        axis=-1,
-        features=(num_heads, head_dim),
-        kernel_init=kernel_init,
-        bias_init=bias_init,
-        bias=bias,
-        precision=precision)
+    # xcxc
+    # dense = DenseGeneral.partial(
+    #     axis=-1,
+    #     features=(num_heads, head_dim),
+    #     kernel_init=kernel_init,
+    #     bias_init=bias_init,
+    #     bias=bias,
+    #     precision=precision)
     # project inputs_q to multi-headed q/k/v
     # dimensions are then [bs, dims..., n_heads, n_features_per_head]
     query, key, value = (dense(inputs_q, dtype=dtype, name='query'),
@@ -418,8 +419,9 @@ class MultiHeadDotProductAttention(base.Module):
 
 # TODO(flax-dev): Consider refactoring MultiHeadDotProductAttention and moving
 # causal_mask and cache support into this class instead.
-SelfAttention = MultiHeadDotProductAttention.partial(inputs_kv=None)
-
+# xcxc
+#SelfAttention = MultiHeadDotProductAttention.partial(inputs_kv=None)
+SelfAttention = None
 
 def make_padding_mask(padding_mask_query,
                       padding_mask_key,

@@ -18,7 +18,7 @@
 from collections.abc import Iterable  # pylint: disable=g-importing-member
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from . import base
 from . import initializers
@@ -143,7 +143,9 @@ class Dense(base.Module):
   precision: Any = None
   kernel_init: Any = default_kernel_init
   bias_init: Any = initializers.zeros
+  name: Optional[str] = None
 
+  @base.method
   def __call__(self, inputs):
     """Applies a linear transformation to the inputs along the last dimension.
 
@@ -332,7 +334,7 @@ class Embed(base.Module):
                            embedding_init)
     return embedding[inputs]
 
-  @base.module_method
+# xcxc @base.module_method
   def attend(self, query, **unused_kwargs):
     """Attend over the embedding using a query array.
 
