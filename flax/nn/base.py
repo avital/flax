@@ -196,46 +196,6 @@ MODULE_CLASSMETHODS = [
 ]
 
 
-class _ModuleMeta(abc.ABCMeta):
-  """Meta class for automatically setting the doc of Modules."""
-
-  def __init__(cls, name, bases, attrs):
-    super(_ModuleMeta, cls).__init__(name, bases, attrs)
-    apply_fn = cls.apply
-    apply_doc = apply_fn.__doc__
-    cls.__doc__ = apply_doc
-    apply_params = _fn_parameters(apply_fn)
-    cls.__signature__ = inspect.signature(cls).replace(
-        parameters=apply_params[1:])
-
-    if not bases:
-      return  # skip method signature overides for Module class.
-
-    def wrap_special_method(name):
-      """override the signature and docstring for one of Module's classmethods."""
-      orig_fn = getattr(Module, name)
-
-      @functools.wraps(orig_fn)
-      def wrapper(class_, *args, **kwargs):
-        super_fn = getattr(super(cls, class_), name)
-        return super_fn(*args, **kwargs)
-      wrapper.__doc__ = f'''{orig_fn.__doc__}
-
-      Apply docstring:
-
-      {apply_doc}
-      '''
-      base_params = tuple(x for x in _fn_parameters(orig_fn)
-                          if x.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD)
-      new_params = base_params + apply_params[1:]
-      wrapper.__signature__ = inspect.signature(orig_fn).replace(
-          parameters=new_params)
-      setattr(cls, name, classmethod(wrapper))
-
-    for name in MODULE_CLASSMETHODS:
-      wrap_special_method(name)
-
-
 def _fold_in_str(rng, data):
   """Fold a string into a jax.random.PRNGKey using its SHA-1 hash."""
   m = hashlib.sha1()
@@ -245,45 +205,41 @@ def _fold_in_str(rng, data):
   return random.fold_in(rng, hash_int)
 
 
-class Module(metaclass=_ModuleMeta):
+class Module:
   """Functional modules."""
 
   def __new__(cls, *args, name=None, **kwargs):
-    if not _module_stack:
-      # xcxc
-      raise ValueError('A Module should only be instantiated directly inside'
-                       ' another module.')
-    parent = cls._get_construction_frame()
-    apply_kwargs = cls._extend_kwargs(kwargs)
-    if name is None:
-      name = cls._default_name()
-    elif cls._is_shared():
-      raise ValueError('Cannot override the name of a shared module')
-    if name is None:  # also no default name
-      name = cls.__name__ + '_' + parent.create_name()
-    cls._check_name(name, parent)
-    if parent.is_init and name not in parent.params:
-      rng = _fold_in_str(parent.rng, name)
-      params = {}
-      parent.params[name] = params
-    else:  # apply
-      if name not in parent.params:
-        raise ValueError(f'No module named {name} was created during'
-                         ' initialization.')
-      params = parent.params[name]
-      rng = None
-    frame = _ModuleFrame(name, parent=parent, rng=rng, params=params,
-                         transparent=cls._is_transparent())
-    instance = object.__new__(cls)
-    instance._frame = frame  # pylint: disable=protected-access
-    return instance
-
-  @abc.abstractmethod
-  def apply(self, *args, **kwargs):
-    pass
+    if _module_stack:
+      parent = cls._get_construction_frame()
+      apply_kwargs = cls._extend_kwargs(kwargs)
+      if name is None:
+        name = cls._default_name()
+      elif cls._is_shared():
+        raise ValueError('Cannot override the name of a shared module')
+      if name is None:  # also no default name
+        name = cls.__name__ + '_' + parent.create_name()
+      cls._check_name(name, parent)
+      if parent.is_init and name not in parent.params:
+        rng = _fold_in_str(parent.rng, name)
+        params = {}
+        parent.params[name] = params
+      else:  # apply
+        if name not in parent.params:
+          raise ValueError(f'No module named {name} was created during'
+                          ' initialization.')
+        params = parent.params[name]
+        rng = None
+      frame = _ModuleFrame(name, parent=parent, rng=rng, params=params,
+                          transparent=cls._is_transparent())
+      instance = object.__new__(cls)
+      instance._frame = frame  # pylint: disable=protected-access
+      return instance
+    else:
+      return object.__new__(cls)
 
   @classmethod
   def shared(class_, *, name=None, **kwargs):
+    # TODO: make deprecated and call constructor
     """Partially applies a module and shared parameters for each call.
 
     Args:
@@ -462,7 +418,7 @@ class Module(metaclass=_ModuleMeta):
     frame = _ModuleFrame(name, rng=_rng, parent=parent,
                          transparent=cls._is_transparent())
     with cls._with_instance(frame) as instance:
-      y = instance.apply(*args, **kwargs)
+      y = instance(*args, **kwargs)
       _track_outputs(y)
     return y, cls._post_process_params(frame.params)
 
@@ -481,12 +437,6 @@ class Module(metaclass=_ModuleMeta):
       **kwargs: keyword arguments passed to the module's apply function
     Returns:
       A pair consisting of the model output and the initialized parameters
-    Example:
-      ```
-      input_shape = (batch_size, image_size, image_size, 3)
-      model_output, initial_params = model.init_by_shape(jax.random.PRNGKey(0),
-                                      input_specs=[(input_shape, jnp.float32)])
-      ```
     """
     stochastic_rng = None
     try:
@@ -550,7 +500,10 @@ class Module(metaclass=_ModuleMeta):
     Returns:
       The value of the parameter.
     """
-    frame = self._frame
+    if _module_stack:
+      frame = _module_stack[-1]
+    else:
+      raise ValueError("Must call `param` within `nn.init` or `nn.apply`")
     if frame.is_init:
       if name in frame.params:
         raise ValueError(
@@ -658,7 +611,7 @@ class Module(metaclass=_ModuleMeta):
       # a module with this name already exists. Check validity of sharing
       if shared != parent.shared[name]:
         raise ValueError(f'The name "{name}" is used for both a shared'
-                         ' and unshared module.')
+                         'and unshared module.')
       if not parent.shared[name]:
         raise ValueError(f'A module with named "{name}" already exists.')
     parent.shared[name] = shared
@@ -686,6 +639,44 @@ class Module(metaclass=_ModuleMeta):
   @classmethod
   def _default_name(cls):
     return None
+
+
+def init(fun, _rng, *args, with_output=False, name=None, **kwargs):
+  """Initialize the module parameters.
+
+  Args:
+    _rng: the random number generator used to initialize parameters.
+    *args: arguments passed to the 
+    name: name of this module.
+    **kwargs: keyword arguments passed to the module's apply function
+  Returns:
+    A pair consisting of the model output and the initialized parameters
+  """
+  if _module_stack:
+    parent = _module_stack[-1]
+  else:
+    parent = None
+
+  frame = _ModuleFrame(name=None, rng=_rng, parent=parent)
+  with _module_stack.frame(frame):
+    y = fun(*args, **kwargs)
+  if with_output:
+    return frame.params, y
+  else:
+    return frame.params
+
+
+def apply(fun, params, *args, name=None, **kwargs):
+  """Apply a module with given parameters
+  """
+  if _module_stack:
+    parent = _module_stack[-1]
+  else:
+    parent = None
+
+  frame = _ModuleFrame(name=None, params=params, parent=parent)
+  with _module_stack.frame(frame):
+    return fun(*args, **kwargs)
 
 
 def module(fun):
