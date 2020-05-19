@@ -65,16 +65,16 @@ class CNN(nn.Module):
   """A simple CNN model."""
 
   def apply(self, x):
-    x = nn.Conv(x, features=32, kernel_size=(3, 3))
+    x = nn.Conv(features=32, kernel_size=(3, 3)).apply(x)
     x = nn.relu(x)
     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-    x = nn.Conv(x, features=64, kernel_size=(3, 3))
+    x = nn.Conv(features=64, kernel_size=(3, 3)).apply(x)
     x = nn.relu(x)
     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
     x = x.reshape((x.shape[0], -1))  # flatten
-    x = nn.Dense(x, features=256)
+    x = nn.Dense(features=256).apply(x)
     x = nn.relu(x)
-    x = nn.Dense(x, features=10)
+    x = nn.Dense(features=10).apply(x)
     x = nn.log_softmax(x)
     return x
 
