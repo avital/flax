@@ -31,16 +31,9 @@ class Module:
       rngs = {}
     if variables is None:
       variables = {'param': {}}
+    variables = scoping._unfreeze_variables(variables, mutable)
     parent = Scope(variables, rngs=rngs)
     module = cls(parent, *args, **kwargs)
-
-    # NOTE!! This seems brittle -- think carefully.
-    #
-    # QUESTION: Make sure to unfreeze after calling _recurse so that you don't need
-    # to set params as mutable during construction time...?
-    new_variables = scoping._unfreeze_variables(variables, mutable)
-    module.scope.variables = new_variables
-
     return module
 
   def _ensure_has_name(self):
