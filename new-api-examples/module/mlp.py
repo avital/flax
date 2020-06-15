@@ -1,8 +1,10 @@
-import functools
 import jax
 from jax import numpy as jnp, random, lax
-from flax import nn, struct
-from flax.core.module import Module, autonames
+from flax import nn
+from flax.nn import initializers
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
+from flax.module import Module, autonames
+from dataclasses import dataclass
 
 @dataclass
 class Dense(Module):
@@ -20,12 +22,7 @@ class Dense(Module):
     return y
 
 
-x = jnp.ones((1, 2))
-dense = Dense.toplevel(features=3, rngs={'param': random.PRNGKey(0)}, mutable=['param'])
-dense(x)  # lazy init
-params = dense.variables['param']
-
-
+# MLP where layers are defined in __call__
 @dataclass
 class MLP(Module):
   widths: Tuple
@@ -48,12 +45,15 @@ class Sequential(Module):
       x = layer(x)
     return x
 
+# MLP where layers are defined in ready() (what we use instead of __init__)
+# and used in __call__
 @dataclass
 class MLP2(Module):
   widths: Tuple
   name: str = None
 
   @autonames
+  # TODO: Can we raise an error if someone overrides __init__() instead of ready()?
   def ready(self):
     # TODO: Can we make it throw an error if we do `self.layers = [Dense(self, width)] * 3`?
     self.layers = [Dense(self, width) for width in self.widths]
@@ -63,4 +63,24 @@ class MLP2(Module):
       x = nn.relu(layer(x))
     x = self.layers[-1](x)
     return x
+
+if __name__ == '__main__':
+  x = jnp.ones((1, 2))
+  dense = Dense.toplevel(features=3, rngs={'param': random.PRNGKey(0)}, mutable=['param'])
+  print("Dense instance", dense)
+  print("parameters before call", dense.variables()['param'])
+  print("output", dense(x))  # lazy init
+  print("parameters after call", dense.variables()['param'])
+
+  print()
+  print("-------")
+  print()
+
+  mlp = MLP.toplevel([2,3,4], rngs={'param': random.PRNGKey(42)}, mutable=['param'])
+  print("mlp output", mlp(jnp.ones((1, 2))))  # initialized parameters
+  print("mlp vars", mlp.variables())
+
+  # note that nothing is mutable here and we don't need prngs.
+  mlp2 = MLP2.toplevel([2,3,4], variables=mlp.variables())
+  print("mlp2 output", mlp2(jnp.ones((1, 2))))
     

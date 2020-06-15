@@ -1,13 +1,10 @@
 from dataclasses import dataclass
 import dataclasses
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Type
-from flax import nn
-from flax.nn import initializers
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
 from flax.core.scope import Scope
 
 # CONSIDER: Rename scope to scoping? I really like being able to name variables `scope`
 from flax.core import scope as scoping
-from jax import numpy as jnp
 import functools
 
 from flax.core.frozen_dict import freeze
@@ -57,7 +54,7 @@ class Module:
   def __post_init__(self):
     if isinstance(self.parent, Module):
       self._ensure_has_name()
-      self.parent.submodules()[self.name] = self
+      self.parent.submodules[self.name] = self
       self.scope = self.parent.scope.push(self.name)
 
     elif isinstance(self.parent, Scope):
