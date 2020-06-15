@@ -25,8 +25,8 @@ class Module:
   
   @classmethod
   def toplevel(cls, *args, rngs=None, variables=None, mutable=False, **kwargs):
-    # TODO: Think about the fact that `rngs` and `params` live on args
-    # and kwargs
+    # TODO: Think about the fact that `rngs` and `params` live on kwargs. What if
+    # someone wants to pass a kwarg named "rngs", to do RNG management manually?
     if rngs is None:
       rngs = {}
     if variables is None:
@@ -85,6 +85,7 @@ class Module:
   def param(self, name, init_fun, shape):
     return self.scope.param(name, init_fun, shape)
 
+  # TODO: Methods to access non-parameter variables from scope.
 
 def autonames(fun):
   @functools.wraps(fun)
