@@ -41,7 +41,7 @@ class Module:
       if self.parent._autoname_cursor is None:
         raise ValueError("In order to get autonames, must decorate method with @autonames")
       
-      self.name = f"{self.__class__.__name__}/{self.parent._autoname_cursor}"
+      self.name = f"{self.parent._autoname_prefix}{self.__class__.__name__}/{self.parent._autoname_cursor}"
       self.parent._autoname_cursor += 1
 
   def __post_init__(self):
@@ -57,8 +57,9 @@ class Module:
       raise ValueError("parent must be a Module or Scope")
       
     self.submodules = {}
+    self._autoname_prefix = None
     self._autoname_cursor = None
-    self._autoname_fun = None
+    self._autoname_funs = {}
 
     self.ready()
     
@@ -87,22 +88,32 @@ class Module:
 
   # TODO: Methods to access non-parameter variables from scope.
 
-def autonames(fun):
+def autonames(fun, prefix=''):
   @functools.wraps(fun)
   def wrapped(self, *args, **kwargs):
-    if self._autoname_fun and self._autoname_fun != fun:
-      raise Error(
+    if prefix in self._autoname_funs and self._autoname_funs[prefix] != fun:
+      raise ValueError(
         "Can't only use @autonames on one method. To reuse submodules across methods, "
         "store submodules on `self` during `ready()`. If you want two methods to each "
-        "have distinct sets of autonamed submodules, instead make wrapper submodules -- "
-        "one for each method. Read more at http://TBD.")
-    self._autoname_fun = fun
+        "have distinct sets of autonamed submodules, use `@autonames.prefix`.")
+    else:
+      self._autoname_funs[prefix] = fun
 
-    # "Rewind" the autonaming process
+    if self._autoname_cursor is not None:
+      raise ValueError("Can't nest calls to autonamed methods")
+
+    # "Rewind" the autonaming process, and set the prefix
+    # NOTE: that these are dyanmically scoped, but only on a per-instance
+    # level. Moreover, nesting calls to autonamed methods throws an error so
+    # we guard against the most obvious mistakes one could make
+    self._autoname_prefix = prefix
     self._autoname_cursor = 0
     try:
       return fun(self, *args, **kwargs)
     finally:
       self._autoname_cursor = None
+      self._autoname_prefix = None
 
   return wrapped
+
+autonames.prefix = lambda prefix: functools.partial(autonames, prefix=prefix)
