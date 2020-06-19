@@ -48,6 +48,16 @@ class Module:
     if isinstance(self.parent, Module):
       self._ensure_has_name()
       self.parent.submodules[self.name] = self
+
+      if self.parent._current_method is None:
+        raise ValueError("Unexpected")
+      if self.name in self.parent._method_by_name:
+        raise ValueError(f"Trying to share submodule by name in methods {self.parent._current_method} "
+                         f"and {self.parent._method_by_name[self.name]}. To share submodules, store "
+                         f"module instances as a Python object and reuse. You can store module"
+                         f"instance on `self` to share across methods.")
+      self.parent._method_by_name[self.name] = self.parent._current_method
+
       self.scope = self.parent.scope.push(self.name)
 
     elif isinstance(self.parent, Scope):
@@ -60,6 +70,8 @@ class Module:
     self._autoname_prefix = None
     self._autoname_cursor = None
     self._autoname_funs = {}
+    self._method_by_name = {}
+    self._current_method = None
 
     self.ready()
     
