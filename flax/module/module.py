@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 import dataclasses
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
-from flax.core.scope import Scope
-
-# CONSIDER: Rename scope to scoping? I really like being able to name variables `scope`
-from flax.core import scope as scoping
+# TODO: Make _unfreeze_variables public?
+from flax.core.scope import Scope, _unfreeze_variables
 import functools
 
 from flax.core.frozen_dict import freeze
+
+from contextlib import contextmanager
 
 @dataclass
 # TODO: Document that any class that extends from Module must add
@@ -24,22 +24,21 @@ class Module:
   parent: Union[Type["Module"], Type["Scope"]]
   
   @classmethod
-  def toplevel(cls, *args, rngs=None, variables=None, mutable=False, **kwargs):
-    # TODO: Think about the fact that `rngs` and `params` live on kwargs. What if
+  def toplevel(cls, *args, rngs=None, variables=None, **kwargs):
+    # TODO: Think about the fact that `rngs` and `variables` live on kwargs. What if
     # someone wants to pass a kwarg named "rngs", to do RNG management manually?
     if rngs is None:
       rngs = {}
     if variables is None:
       variables = {'param': {}}
-    variables = scoping._unfreeze_variables(variables, mutable)
-    parent = Scope(variables, rngs=rngs)
+    parent = Scope(freeze(variables), rngs=rngs)
     module = cls(parent, *args, **kwargs)
     return module
 
   def _ensure_has_name(self):
     if self.name is None:
       if self.parent._autoname_cursor is None:
-        raise ValueError("In order to get autonames, must decorate method with @autonames")
+        raise ValueError("In order to get autonames, must decorate method with @nn.autonames")
       
       self.name = f"{self.parent._autoname_prefix}{self.__class__.__name__}/{self.parent._autoname_cursor}"
       self.parent._autoname_cursor += 1
@@ -49,8 +48,6 @@ class Module:
       self._ensure_has_name()
       self.parent.submodules[self.name] = self
 
-      if self.parent._current_method is None:
-        raise ValueError("Unexpected")
       if self.name in self.parent._method_by_name:
         raise ValueError(f"Trying to share submodule by name in methods {self.parent._current_method} "
                          f"and {self.parent._method_by_name[self.name]}. To share submodules, store "
@@ -67,12 +64,19 @@ class Module:
       raise ValueError("parent must be a Module or Scope")
       
     self.submodules = {}
+
+    # Optional mechanism for methods to allow for autonamed submodules.
+    # See autonames.py
     self._autoname_prefix = None
     self._autoname_cursor = None
     self._autoname_funs = {}
+
+    # Recommended mechanism for forbidding accidental submodule reuse-by-name.
+    # See dataclass.py
     self._method_by_name = {}
     self._current_method = None
 
+    # subclasses should implement `ready()` instead of `__init__` or `__post_init__`
     self.ready()
     
   def ready(self):
@@ -84,11 +88,21 @@ class Module:
     """
     pass
         
-  def copy(self, rngs=None, variables=None, mutable=False, **kwargs):
+  def update(self, rngs=None, variables=None, **kwargs):
     """Construct a new module instance based on this one, with overrides."""
-    return self.__class__.toplevel(
-      **dataclasses.asdict(module),
-      rngs=rngs, variables=variables, mutable=mutable, **kwargs)
+    attrs = dataclasses.asdict(self)
+    del attrs['parent']
+    return self.__class__.toplevel(**attrs, rngs=rngs, variables=variables, **kwargs)
+
+  @contextmanager
+  def mutate(self, mutable):
+
+    cloned = self.update()
+    try:
+      cloned.variables = _unfreeze_variables(cloned.variables, mutable)
+      yield cloned
+    finally:
+      cloned.variables = freeze(cloned.variables)
 
   # QUESTION: Should this be a property? Or should it be assigned
   # to `self.variables` during __post_init__?
@@ -97,35 +111,7 @@ class Module:
 
   def param(self, name, init_fun, shape):
     return self.scope.param(name, init_fun, shape)
+    
 
   # TODO: Methods to access non-parameter variables from scope.
 
-def autonames(fun, prefix=''):
-  @functools.wraps(fun)
-  def wrapped(self, *args, **kwargs):
-    if prefix in self._autoname_funs and self._autoname_funs[prefix] != fun:
-      raise ValueError(
-        "Can't only use @autonames on one method. To reuse submodules across methods, "
-        "store submodules on `self` during `ready()`. If you want two methods to each "
-        "have distinct sets of autonamed submodules, use `@autonames.prefix`.")
-    else:
-      self._autoname_funs[prefix] = fun
-
-    if self._autoname_cursor is not None:
-      raise ValueError("Can't nest calls to autonamed methods")
-
-    # "Rewind" the autonaming process, and set the prefix
-    # NOTE: that these are dyanmically scoped, but only on a per-instance
-    # level. Moreover, nesting calls to autonamed methods throws an error so
-    # we guard against the most obvious mistakes one could make
-    self._autoname_prefix = prefix
-    self._autoname_cursor = 0
-    try:
-      return fun(self, *args, **kwargs)
-    finally:
-      self._autoname_cursor = None
-      self._autoname_prefix = None
-
-  return wrapped
-
-autonames.prefix = lambda prefix: functools.partial(autonames, prefix=prefix)

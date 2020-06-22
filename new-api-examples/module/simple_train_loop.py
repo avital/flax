@@ -12,7 +12,6 @@ class Dense(Module):
   features: int
   kernel_init: Callable = initializers.lecun_normal()
   bias_init: Callable = initializers.zeros
-  name: str = None
 
   def __call__(self, x):
     kernel = self.param('kernel', self.kernel_init, (x.shape[-1], self.features))
@@ -33,19 +32,11 @@ class MLP(Module):
 X = jnp.ones((1, 10))
 Y = jnp.ones((5, ))
 
-## To use JAX transformations like @jit, you need to follow certain patterns
-# to make pure functions. Example below include predicting from a parameter dict,
-# and returning the initialized parameters for a module. You could do arbitrary things
-# between construction of a module instance until you return values from the function,
-# which gives you a lot of flexibility -- what if you want to apply the module, then reset
-# batch norm stats and run it again, computing the difference between the two runs?
-# Now you can!
+model = MLP.toplevel([3, 4, 5])
 
 @jit
 def predict(params):
-  # TODO: Think about the fact that you have to put the hyperparameters here  
-  mlp = MLP.toplevel([3, 4, 5], variables={'param': params})
-  return mlp(X)
+  return model.update(variables={'param': params})(X)
   
 @jit
 def loss_fn(params):
@@ -53,12 +44,10 @@ def loss_fn(params):
   # TODO: Print in jit
   return jnp.mean(jnp.abs(Y - Yhat))
 
-@jit
 def init_params(rng):
-  # TODO: Think about the fact that you have to put the hyperparameters here  
-  mlp = MLP.toplevel([3, 4, 5], rngs={'param': rng}, mutable=['param', 'state'])
-  # Pass an input in to initialize parameters
-  mlp(X)
+  with model.update(rngs={'param': rng}).mutate(['param']) as mlp:
+    # lazy init
+    mlp(X)
   return mlp.variables()['param']
 
 
