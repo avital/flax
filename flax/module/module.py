@@ -95,14 +95,14 @@ class Module:
     return self.__class__.toplevel(**attrs, rngs=rngs, variables=variables, **kwargs)
 
   @contextmanager
-  def mutate(self, mutable):
+  def mutate(self, mutable=True, **kwargs):
 
-    cloned = self.update()
+    cloned = self.update(**kwargs)
     try:
-      cloned.variables = _unfreeze_variables(cloned.variables, mutable)
+      cloned.scope.variables = _unfreeze_variables(cloned.scope.variables, mutable)
       yield cloned
     finally:
-      cloned.variables = freeze(cloned.variables)
+      cloned.scope.variables = freeze(cloned.scope.variables)
 
   # QUESTION: Should this be a property? Or should it be assigned
   # to `self.variables` during __post_init__?

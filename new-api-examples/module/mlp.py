@@ -4,9 +4,10 @@ from flax import nn
 from flax.nn import initializers
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
 from flax.module import Module, autonames
+from flax import module
 from dataclasses import dataclass
 
-@dataclass
+@module.dataclass
 class Dense(Module):
   features: int
   bias: bool = True
@@ -23,7 +24,7 @@ class Dense(Module):
 
 
 # MLP where layers are defined in __call__
-@dataclass
+@module.dataclass
 class MLP(Module):
   widths: Tuple
   name: str = None
@@ -47,7 +48,7 @@ class Sequential(Module):
 
 # MLP where layers are defined in ready() (what we use instead of __init__)
 # and used in __call__
-@dataclass
+@module.dataclass
 class MLP2(Module):
   widths: Tuple
   name: str = None

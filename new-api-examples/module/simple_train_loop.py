@@ -3,21 +3,22 @@ from jax import numpy as jnp, random, lax
 from flax import nn
 from flax.nn import initializers
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
+from flax import module
 from flax.module import Module, autonames
-from dataclasses import dataclass
 from jax import jit
 
-@dataclass
+@module.dataclass
 class Dense(Module):
   features: int
   kernel_init: Callable = initializers.lecun_normal()
   bias_init: Callable = initializers.zeros
+  name: str = None
 
   def __call__(self, x):
     kernel = self.param('kernel', self.kernel_init, (x.shape[-1], self.features))
     return jnp.dot(x, kernel) + self.param('bias', self.bias_init, (self.features,))
 
-@dataclass
+@module.dataclass
 class MLP(Module):
   widths: Tuple
   name: str = None
@@ -45,7 +46,7 @@ def loss_fn(params):
   return jnp.mean(jnp.abs(Y - Yhat))
 
 def init_params(rng):
-  with model.update(rngs={'param': rng}).mutate(['param']) as mlp:
+  with model.mutate(rngs={'param': rng}, mutable=['param']) as mlp:
     # lazy init
     mlp(X)
   return mlp.variables()['param']
