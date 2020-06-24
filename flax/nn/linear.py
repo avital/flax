@@ -25,6 +25,9 @@ from jax import lax
 import jax.numpy as jnp
 import numpy as onp
 
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
+
+
 
 default_kernel_init = initializers.lecun_normal()
 
@@ -124,40 +127,30 @@ class DenseGeneral(base.Module):
     return out
 
 
-class Dense(base.Module):
+from flax.module import Module
+from flax import module
+@module.dataclass
+class Dense(Module):
   """A linear transformation applied over the last dimension of the input."""
 
-  def apply(self,
-            inputs,
-            features,
-            bias=True,
-            dtype=jnp.float32,
-            precision=None,
-            kernel_init=default_kernel_init,
-            bias_init=initializers.zeros):
-    """Applies a linear transformation to the inputs along the last dimension.
+  features: int
+  bias: bool = True
+  dtype: Any = jnp.float32
+  precision: lax.Precision = None
+  kernel_init: Callable = default_kernel_init
+  bias_init: Callable = initializers.zeros
+  name: Optional[str] = None
 
-    Args:
-      inputs: The nd-array to be transformed.
-      features: the number of output features.
-      bias: whether to add a bias to the output (default: True).
-      dtype: the dtype of the computation (default: float32).
-      precision: numerical precision of the computation see `jax.lax.Precision`
-        for details.
-      kernel_init: initializer function for the weight matrix.
-      bias_init: initializer function for the bias.
-    Returns:
-      The transformed input.
-    """
-    inputs = jnp.asarray(inputs, dtype)
-    kernel = self.param('kernel', (inputs.shape[-1], features), kernel_init)
-    kernel = jnp.asarray(kernel, dtype)
+  def __call__(self, inputs):
+    inputs = jnp.asarray(inputs, self.dtype)
+    kernel = self.param('kernel', self.kernel_init, (inputs.shape[-1], self.features))
+    kernel = jnp.asarray(kernel, self.dtype)
     y = lax.dot_general(inputs, kernel,
                         (((inputs.ndim - 1,), (0,)), ((), ())),
-                        precision=precision)
-    if bias:
-      bias = self.param('bias', (features,), bias_init)
-      bias = jnp.asarray(bias, dtype)
+                        precision=self.precision)
+    if self.bias:
+      bias = self.param('bias', self.bias_init, (self.features,))
+      bias = jnp.asarray(bias, self.dtype)
       y = y + bias
     return y
 

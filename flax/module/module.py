@@ -5,7 +5,7 @@ from typing import Any, Callable, Iterable, List, Optional, Tuple, Type, Union
 from flax.core.scope import Scope, _unfreeze_variables
 import functools
 
-from flax.core.frozen_dict import freeze
+from flax.core.frozen_dict import freeze, unfreeze
 
 from contextlib import contextmanager
 
@@ -31,8 +31,13 @@ class Module:
       rngs = {}
     if variables is None:
       variables = {'param': {}}
-    parent = Scope(freeze(variables), rngs=rngs)
-    module = cls(parent, *args, **kwargs)
+
+    # QUESTION: Is it odd that we unfreeze here?
+    # This was needed for the "TiedAutoencoder" example
+    variables = unfreeze(variables)
+    scope = Scope(variables, rngs=rngs)
+    module = cls(scope, *args, **kwargs)
+    scope.variables = freeze(scope.variables)
     return module
 
   def _ensure_has_name(self):
@@ -43,7 +48,22 @@ class Module:
       self.name = f"{self.parent._autoname_prefix}{self.__class__.__name__}/{self.parent._autoname_cursor}"
       self.parent._autoname_cursor += 1
 
+  def __setattr__(self, name, val):
+    if name != 'parent' and isinstance(val, Module):
+      val.parent = self
+      if val.name is None:
+        val.name = name
+      val.__post_init__()
+    # TODO: Consider also overriding __getattr__ like PyTorch?
+    super().__setattr__(name, val)
+
   def __post_init__(self):
+    """Register self as a child of self.parent."""
+    if (isinstance(self.parent, Module) and self.name is None and
+        self.parent._autoname_cursor is None):
+      # defer naming and registration on parent until __setattr__.
+      return
+
     if isinstance(self.parent, Module):
       self._ensure_has_name()
       self.parent.submodules[self.name] = self
@@ -76,10 +96,10 @@ class Module:
     self._method_by_name = {}
     self._current_method = None
 
-    # subclasses should implement `ready()` instead of `__init__` or `__post_init__`
-    self.ready()
+    # subclasses should implement `setup()` instead of `__init__` or `__post_init__`
+    self.setup()
     
-  def ready(self):
+  def setup(self):
     """Called when module instance receives variables and PRNGs.
     
     If you want to use PRNGs and/or read or write variables during module
@@ -88,16 +108,15 @@ class Module:
     """
     pass
         
-  def update(self, rngs=None, variables=None, **kwargs):
+  def clone(self):
     """Construct a new module instance based on this one, with overrides."""
-    attrs = dataclasses.asdict(self)
-    del attrs['parent']
-    return self.__class__.toplevel(**attrs, rngs=rngs, variables=variables, **kwargs)
+    attrs = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+    print(attrs)
+    return self.__class__(**attrs)
 
   @contextmanager
-  def mutate(self, mutable=True, **kwargs):
-
-    cloned = self.update(**kwargs)
+  def mutate(self, mutable=True):
+    cloned = self.clone()
     try:
       cloned.scope.variables = _unfreeze_variables(cloned.scope.variables, mutable)
       yield cloned
@@ -113,5 +132,6 @@ class Module:
     return self.scope.param(name, init_fun, shape)
     
 
-  # TODO: Methods to access non-parameter variables from scope.
+  def variable(self, kind, name, default_fun, shape):
+    return self.scope.variable(kind, name, default_fun, shape)
 

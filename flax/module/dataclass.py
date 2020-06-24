@@ -22,9 +22,12 @@ def forbid_reuse_by_name_method(fun):
   return wrapped
 
 def forbid_reuse_by_name(cls):
-  for key in set(dir(cls)).difference(dir(Module)):
-    val = getattr(cls, key)
-    if inspect.isfunction(val) and not inspect.ismethod(val):
+  dataclass_fieldnames = set([f.name for f in dataclasses.fields(dataclasses.dataclass(cls))])
+  for key, val in cls.__dict__.items():
+    if (key not in dataclass_fieldnames and
+        not key.startswith('__') and
+        inspect.isfunction(val) and
+        not inspect.ismethod(val)):
       setattr(cls, key, forbid_reuse_by_name_method(val))
   return cls
 
@@ -33,6 +36,6 @@ def dataclass(cls):
     raise ValueError("Must extend from Module to use @module.dataclass")
   # TODO: Try adding "name: Optional[str] = None" to the
   # dataclass definition.
-  cls = dataclasses.dataclass(cls)
   cls = forbid_reuse_by_name(cls)
+  cls = dataclasses.dataclass(cls)
   return cls
