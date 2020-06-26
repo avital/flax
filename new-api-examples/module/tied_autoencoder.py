@@ -17,31 +17,28 @@ class TiedAutoencoder(Module):
   name: Optional[str] = None
 
   def setup(self):
-    # NOTE: I tried overriding __setattr__
-    self.encoder = nn.Dense(self, features=3)
-    self.decoder = nn.Dense(self, features=self.in_features)
+    self.encoder = nn.Dense(parent=None, features=3)
 
-    # QUESTION: Should we do something better than jnp.ones here?
-    # (like current Flax's init_by_shape?)
-    self(jnp.ones((1, self.in_features)))  # initialize dense parameters defined lazily
-
-    # TODO: Use EasyDict so that we get this syntax: 
-    # self.decoder.variables.param.kernel = self.encoder.variables.param.kernel.T
-    self.decoder.variables()['param']['kernel'] = self.encoder.variables()['param']['kernel'].T
+    class Decoder(nn.Dense):
+      def param(decoder, name, init_fun, shape):
+        if name == 'kernel':
+          return self.encoder.variables()['param']['kernel'].T
+        else:
+          return super().param(name, init_fun, shape)
+    self.decoder = Decoder(parent=None, features=self.in_features)
 
   def __call__(self, x):
     z = nn.sigmoid(self.encoder(x))
     return nn.sigmoid(self.decoder(z))
 
-@jax.jit
 def init_vars():
   tae = TiedAutoencoder.toplevel(rngs={'param': random.PRNGKey(0)})
+  tae = tae.initialized(jnp.ones((1, tae.in_features)))
   return tae.variables()
 
-@jax.jit
 def loss(variables):
-  X = jnp.ones((16, 4*4))
-  Y = jnp.ones((16, 4*4))
+  X = jnp.ones((16, 4*4)) * 0.5
+  Y = jnp.ones((16, 4*4)) * 0.5
   tae = TiedAutoencoder.toplevel(variables=variables)
   return jnp.mean(jnp.abs(tae(X) - Y))
 

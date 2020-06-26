@@ -128,11 +128,15 @@ class Scope:
     variables = self.get_kind(kind)
     variables[name] = value
 
+  def variable(self, kind: str, name: str, init_fn: Callable[..., T], *init_args) -> T:
+    if not self.has_variable(kind, name):
+      init_value = init_fn(self.make_rng(kind), *init_args)
+      self.put_variable(kind, name, init_value)
+    return self.get_variable(kind, name), functools.partial(self.put_variable, kind, name)
+
   def param(self, name: str, init_fn: Callable[..., T], *init_args) -> T:
-    if not self.has_variable('param', name):
-      init_value = init_fn(self.make_rng('param'), *init_args)
-      self.put_variable('param', name, init_value)
-    return self.get_variable('param', name)
+    val, _ = self.variable('param', name, init_fn, *init_args)
+    return val 
 
 
 def _unfreeze_variables(variables, mutable):

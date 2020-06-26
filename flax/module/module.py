@@ -59,8 +59,7 @@ class Module:
 
   def __post_init__(self):
     """Register self as a child of self.parent."""
-    if (isinstance(self.parent, Module) and self.name is None and
-        self.parent._autoname_cursor is None):
+    if self.parent is None and self.name is None:
       # defer naming and registration on parent until __setattr__.
       return
 
@@ -109,9 +108,7 @@ class Module:
     pass
         
   def clone(self):
-    """Construct a new module instance based on this one, with overrides."""
     attrs = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
-    print(attrs)
     return self.__class__(**attrs)
 
   @contextmanager
@@ -122,6 +119,11 @@ class Module:
       yield cloned
     finally:
       cloned.scope.variables = freeze(cloned.scope.variables)
+
+  def initialized(self, *args, method=lambda self: self.__call__, **kwargs):
+    with self.mutate() as initialized:
+      method(initialized)(*args, **kwargs)
+    return initialized
 
   # QUESTION: Should this be a property? Or should it be assigned
   # to `self.variables` during __post_init__?
