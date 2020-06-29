@@ -33,33 +33,34 @@ class MLP(Module):
 X = jnp.ones((1, 10))
 Y = jnp.ones((5, ))
 
-model = MLP.toplevel([3, 4, 5])
-
 @jit
 def predict(params):
-  return model.update(variables={'param': params})(X)
+  return MLP.toplevel([3, 4, 5], variables={'param': params})(X)
   
 @jit
 def loss_fn(params):
-  Yhat = predict(params)
-  # TODO: Print in jit
-  return jnp.mean(jnp.abs(Y - Yhat))
+  return jnp.mean(jnp.abs(Y - predict(params)))
 
+@jit
 def init_params(rng):
-  with model.mutate(rngs={'param': rng}, mutable=['param']) as mlp:
-    # lazy init
-    mlp(X)
+  mlp = MLP.toplevel([3, 4, 5], rngs={'param': rng})
+  # calling `mlp(X)` here leads to an error -- variables are frozen.
+  # instead, use `mlp.initialized` that returns a clone that has
+  # initialized variables
+  #
+  # TODO: Make `rngs` an argument to `initialized` instead of placing it on
+  # the top level MLP above.
+  #
+  # TODO2: Consider whether .toplevel() becomes necessary at that point.
+  mlp = mlp.initialized(X)
   return mlp.variables()['param']
-
 
 # You can evaluate the loss function with a given PRNG
 loss_fn(init_params(jax.random.PRNGKey(42)))
 
-
 # You can take gradients of the loss function w.r.t. parameters
 # (in this case we're evaluating at the initial parameters)
 jax.grad(loss_fn)(init_params(jax.random.PRNGKey(42)))
-
 
 # Run SGD.
 params = init_params(jax.random.PRNGKey(42))

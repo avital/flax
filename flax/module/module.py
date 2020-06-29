@@ -109,10 +109,11 @@ class Module:
         
   def clone(self):
     attrs = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+    attrs = {**attrs}
     return self.__class__(**attrs)
 
   @contextmanager
-  def mutate(self, mutable=True):
+  def mutate(self, mutable=True, rngs=None):
     cloned = self.clone()
     try:
       cloned.scope.variables = _unfreeze_variables(cloned.scope.variables, mutable)
