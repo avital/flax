@@ -65,15 +65,25 @@ class Scope:
     self.name = name
     # TODO: Make variables OrderedDicts (and make OrderedDicts and FrozenOrderedDicts serialize
     # in a order-dependent way)
-    self.variables = variables
+    self._variables = variables
+
+    # TODO: Why do we need root?
+    self.root = parent.root if parent else self
     self.rngs = rngs if rngs else {}
 
     self.trace_level = tracers.trace_level(tracers.current_trace())
     
     self.rng_counters = {key: 0 for key in self.rngs}
 
+    # TODO: What is the purpose of Jonathan's _invalid on his branch?
+
   def _validate_trace_level(self):
     tracers.check_trace_level(self.trace_level)
+
+  def _populate_kinds(self):
+    kinds = self.root._variables.keys()
+    for kind in kinds:
+      self.get_kind(kind)
 
   def push(self, name: str) -> 'Scope':
     self._validate_trace_level()
@@ -88,17 +98,17 @@ class Scope:
       
   def get_kind(self, kind: str) -> MaybeFrozenKind:
     """Returns all variable of a given kind."""
-    if kind not in self.variables:
+    if kind not in self._variables:
       if self.parent:
         parent_kind = self.parent.get_kind(kind)
         if self.name not in parent_kind:
           if isinstance(parent_kind, FrozenDict):
             return FrozenDict()
           parent_kind[self.name] = {}
-        self.variables[kind] = parent_kind[self.name]
+        self._variables[kind] = parent_kind[self.name]
       else:
         return FrozenDict()
-    return self.variables[kind]
+    return self._variables[kind]
 
   def has_rng(self, kind: str) -> bool:
     return kind in self.rngs

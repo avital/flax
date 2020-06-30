@@ -34,6 +34,7 @@ def forbid_reuse_by_name(cls):
 def dataclass(cls):
   if Module not in cls.__bases__:
     raise ValueError("Must extend from Module to use @module.dataclass")
+#  cls = make_dataclass(cls.__name__, dataclasses.fields(cls), bases=cls.__bases__, )
   # TODO: Try adding "name: Optional[str] = None" to the
   # dataclass definition.
   cls = forbid_reuse_by_name(cls)

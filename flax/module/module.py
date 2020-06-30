@@ -37,7 +37,7 @@ class Module:
     variables = unfreeze(variables)
     scope = Scope(variables, rngs=rngs)
     module = cls(scope, *args, **kwargs)
-    scope.variables = freeze(scope.variables)
+    scope._variables = freeze(scope._variables)
     return module
 
   def _ensure_has_name(self):
@@ -116,10 +116,10 @@ class Module:
   def mutate(self, mutable=True, rngs=None):
     cloned = self.clone()
     try:
-      cloned.scope.variables = _unfreeze_variables(cloned.scope.variables, mutable)
+      cloned.scope._variables = _unfreeze_variables(cloned.scope._variables, mutable)
       yield cloned
     finally:
-      cloned.scope.variables = freeze(cloned.scope.variables)
+      cloned.scope._variables = freeze(cloned.scope._variables)
 
   def initialized(self, *args, method=lambda self: self.__call__, **kwargs):
     with self.mutate() as initialized:
@@ -129,11 +129,10 @@ class Module:
   # QUESTION: Should this be a property? Or should it be assigned
   # to `self.variables` during __post_init__?
   def variables(self):
-    return self.scope.variables
+    return self.scope._variables
 
   def param(self, name, init_fun, shape):
     return self.scope.param(name, init_fun, shape)
-    
 
   def variable(self, kind, name, default_fun, shape):
     return self.scope.variable(kind, name, default_fun, shape)
