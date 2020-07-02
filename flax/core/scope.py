@@ -31,6 +31,7 @@ KindFilter = Union[bool, str, Sequence[str]]
 MaybeFrozenKind = Union[Dict[str, Any], FrozenDict[str, Any]]
 
 Variables = Dict[str, MaybeFrozenKind]
+RNGs = Optional[Dict[str, PRNGKey]]
 
 def _fold_in_str(rng: PRNGKey, data: str) -> PRNGKey:
   """Fold a string into a jax.random.PRNGKey using its SHA-1 hash."""
@@ -57,7 +58,7 @@ class Scope:
 
   def __init__(self,
                variables: Variables,
-               rngs: Optional[Dict[str, PRNGKey]] = None,
+               rngs: RNGs = None,
                name: Optional[str] = None,
                parent: Optional['Scope'] = None):
     # TODO: Use EasyDict here
@@ -145,7 +146,7 @@ class Scope:
     return self.get_variable(kind, name), functools.partial(self.put_variable, kind, name)
 
   def param(self, name: str, init_fn: Callable[..., T], *init_args) -> T:
-    val, _ = self.variable('param', name, init_fn, *init_args)
+    val, _ = self.variable('params', name, init_fn, *init_args)
     return val 
 
 

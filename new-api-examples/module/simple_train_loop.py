@@ -12,7 +12,6 @@ class Dense(Module):
   features: int
   kernel_init: Callable = initializers.lecun_normal()
   bias_init: Callable = initializers.zeros
-  name: str = None
 
   def __call__(self, x):
     kernel = self.param('kernel', self.kernel_init, (x.shape[-1], self.features))
@@ -21,9 +20,7 @@ class Dense(Module):
 @module.dataclass
 class MLP(Module):
   widths: Tuple
-  name: str = None
 
-  @autonames
   def __call__(self, x):
     for width in self.widths[:-1]:
       x = nn.relu(Dense(self, width)(x))
@@ -33,37 +30,32 @@ class MLP(Module):
 X = jnp.ones((1, 10))
 Y = jnp.ones((5, ))
 
-@jit
+#@jit
 def predict(params):
-  return MLP.toplevel([3, 4, 5], variables={'param': params})(X)
+  return MLP(None, [3, 4, 5], variables={'params': params})(X)
   
-@jit
+#@jit
 def loss_fn(params):
   return jnp.mean(jnp.abs(Y - predict(params)))
 
-@jit
+#@jit
 def init_params(rng):
-  mlp = MLP.toplevel([3, 4, 5], rngs={'param': rng})
-  # calling `mlp(X)` here leads to an error -- variables are frozen.
-  # instead, use `mlp.initialized` that returns a clone that has
-  # initialized variables
-  #
-  # TODO: Make `rngs` an argument to `initialized` instead of placing it on
-  # the top level MLP above.
-  #
-  # TODO2: Consider whether .toplevel() becomes necessary at that point.
-  mlp = mlp.initialized(X)
-  return mlp.variables()['param']
+  mlp = MLP(None, [3, 4, 5], rngs={'params': rng}).initialized(X)
+  return mlp.params
+
+# Get initial parameters
+params = init_params(jax.random.PRNGKey(42))
+
+print("initial params", params)
 
 # You can evaluate the loss function with a given PRNG
-loss_fn(init_params(jax.random.PRNGKey(42)))
+loss_fn(params)
 
 # You can take gradients of the loss function w.r.t. parameters
 # (in this case we're evaluating at the initial parameters)
 jax.grad(loss_fn)(init_params(jax.random.PRNGKey(42)))
 
 # Run SGD.
-params = init_params(jax.random.PRNGKey(42))
 for i in range(50):
   loss, grad = jax.value_and_grad(loss_fn)(params)
   print(i, "loss = ", loss, "Yhat = ", predict(params))

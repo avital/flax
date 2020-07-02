@@ -1,3 +1,3 @@
 from .module import Module
-from .autonames import autonames
+from .autonames import public
 from .dataclass import dataclass
