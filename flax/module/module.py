@@ -34,15 +34,18 @@ class Module:
     self._current_method = None
 
     if self.parent is None:
-      if self.rngs is None:
-        self.rngs = {}
-      if self.variables is None:
-        self.variables = {'params': {}}
+      rngs = self.rngs
+      variables = self.variables
+      # NOTE: We need to keep `self.rngs` and `self.variables` around here so that `self.clone()` works.
+      if rngs is None:
+        rngs = {}
+      if variables is None:
+        variables = {'params': {}}
 
       # QUESTION: Is it odd that we unfreeze here?
       # This was needed for the "TiedAutoencoder" example
-      self.variables = unfreeze(self.variables)
-      self.scope = Scope(self.variables, self.rngs)
+      variables = unfreeze(variables)
+      self.scope = Scope(variables, rngs)
       self._setup()
     else:
       assert self.variables is None
@@ -56,7 +59,7 @@ class Module:
         self._register_as_submodule(self, self.name)
         self._setup()
       elif self.parent._autoname_state is not None:
-        self._register_as_submodule(f"{self.parent._autoname_state['prefix']}{self.__class__.__name__}/{self.parent._autoname_state['cursor']}")
+        self._register_as_submodule(f"{self.parent._autoname_state['prefix']}{self.__class__.__name__}_{self.parent._autoname_state['cursor']}")
         self._setup()
         self.parent._autoname_state['cursor'] += 1
       else:
@@ -75,13 +78,19 @@ class Module:
     self.parent.submodules[name] = self
     self.parent._method_by_name[self.name] = self.parent._current_method
     self.scope = self.parent.scope.push(name)
-    self.variables = self.scope._variables
-    self.rngs = self.scope.rngs
 
   def _setup(self):
     self._in_setup = True
     self.setup()
-    self.variables = freeze(self.variables)
+    # TODO: Think carefully! The following commented-out line doesn't work
+    # without it, e.g. in the DenseAndCounter example:
+    # We construct a Counter inside DenseAndCounter and call it, which updates the counter
+    # variable. This should work.
+    # TODO2: Even more broadly, what is a correct pattern for freezing variables? If we just
+    # freeze the variables on a scope, the variables on subscopes are not frozen.
+    # Maybe a form of FrozenDict that is stateful? Like x = MaybeFrozenDict({"foo": 2}); x.freeze(); x.unfreeze()
+    # that works recursively?
+    # self.scope._variables = freeze(self.scope._variables)
     self._in_setup = False
 
   def setup(self):
@@ -107,13 +116,9 @@ class Module:
     cloned = self.clone()
     try:
       cloned.scope._variables = _unfreeze_variables(cloned.scope._variables, mutable)
-      # TODO: It is pretty annoying that we have to keep changing variables every time we 
-      # change scope.
-      cloned.variables = cloned.scope._variables
       yield cloned
     finally:
       cloned.scope._variables = freeze(cloned.scope._variables)
-      cloned.variables = cloned.scope._variables
 
   # TODO: Should initialized() take in rngs?
   def initialized(self, *args, method=lambda self: self.__call__, **kwargs):
@@ -126,13 +131,18 @@ class Module:
       assert self.parent._in_setup
       raise ValueError("Must assign module to self before use.")
 
+  def __dir__(self):
+    print(super().__dir__())
+    return super().__dir__() + list(self.scope._variables) + list(self.submodules)
+
+
   # TODO: Not sure I like this, stack traces are ugly. Is there a better solution?
   def __getattr__(self, name):
-    if name == 'variables' or name == 'submodules':
+    if name == 'scope' or name == 'submodules':
       return self.__getattribute__(name)
 
-    if self.variables and name in self.variables:
-      return self.variables[name]
+    if self.scope and name in self.scope._variables:
+      return self.scope._variables[name]
     elif name in self.submodules:
       return self.submodules[name]
     else:
@@ -161,7 +171,7 @@ class Module:
       elif isinstance(val, collections.abc.Sequence):
         for i, subval in enumerate(val):
           if isinstance(subval, Module):
-            _setup_submodule(subval, f"{name}/{i}")
+            _setup_submodule(subval, f"{name}_{i}")
 
       # TODO: Support nested sequences? dicts?
 

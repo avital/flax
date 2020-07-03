@@ -68,23 +68,22 @@ class Scope:
     # in a order-dependent way)
     self._variables = variables
 
-    # TODO: Why do we need root?
-    self.root = parent.root if parent else self
     self.rngs = rngs if rngs else {}
 
     self.trace_level = tracers.trace_level(tracers.current_trace())
     
     self.rng_counters = {key: 0 for key in self.rngs}
-
     # TODO: What is the purpose of Jonathan's _invalid on his branch?
 
   def _validate_trace_level(self):
     tracers.check_trace_level(self.trace_level)
 
   def _populate_kinds(self):
-    kinds = self.root._variables.keys()
-    for kind in kinds:
-      self.get_kind(kind)
+    # TODO: Remove?
+    if self.parent:
+      kinds = self.parent._variables.keys()
+      for kind in kinds:
+        self.get_kind(kind)
 
   def push(self, name: str) -> 'Scope':
     self._validate_trace_level()

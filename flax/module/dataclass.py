@@ -47,10 +47,10 @@ def dataclass(cls):
   cls.name = None
   
   cls.__annotations__["variables"] = Variables
-  cls.variables = None
-  
+  cls.variables = dataclasses.field(default=None, repr=False)
+
   cls.__annotations__["rngs"] = RNGs
-  cls.rngs = None
+  cls.rngs = dataclasses.field(default=None, repr=False)
 
   cls = forbid_reuse_by_name(cls)
   cls = make_call_public(cls)
