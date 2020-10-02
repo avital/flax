@@ -300,10 +300,11 @@ class Module:
           submodule.name = f'{name}{suffix}'
           submodule.__post_init__()
     # val is a parameter array or a Variable reference class.
-    elif isinstance(val, (np.ndarray, jax.interpreters.xla.DeviceArray,
+    # TODO: Add test that would have caught missing jnp.ndarray here
+    elif isinstance(val, (jax.numpy.ndarray, np.ndarray, jax.interpreters.xla.DeviceArray,
                           Variable)) and self._state.in_setup:
+      import pdb; pdb.set_trace()
       if hasattr(self, name):
-        import pdb; pdb.set_trace()
         # re-assigning in "interactive mode":
         self.reservations[name].value = val
       else:
