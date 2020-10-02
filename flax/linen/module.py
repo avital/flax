@@ -31,7 +31,7 @@ from flax import traverse_util
 from flax import serialization
 from flax.core import Scope, apply
 from flax.core.scope import Variable
-from flax.core.frozen_dict import freeze
+from flax.core.frozen_dict import freeze, unfreeze
 
 # from .dotgetter import DotGetter
 
@@ -65,6 +65,7 @@ _context = _DynamicContext()
 class _Sentinel:
   pass
 _unspecified_parent = _Sentinel()
+_default_call_method = _Sentinel()
 
 
 # Enable automatic named_call wrapping for labelling profile traces.
@@ -184,14 +185,14 @@ class _ModuleInternalState:
   in_setup: bool = False
   last_varname: Optional[str] = None
   autoname_cursor: Optional[dict] = dataclasses.field(default_factory=dict)
-  reservations: Optional[set] = dataclasses.field(default_factory=set)
+  reservations: Optional[dict] = dataclasses.field(default_factory=dict)
 
   def reset(self):
     self.in_compact_method = False
     self.in_setup = False
     self.last_varname = None
     self.autoname_cursor = dict()
-    self.reservations = set()
+    self.reservations = dict()
 
 _uninitialized_module_internal_state = _ModuleInternalState(
     False, False, None, None, None)
@@ -301,11 +302,19 @@ class Module:
     # val is a parameter array or a Variable reference class.
     elif isinstance(val, (np.ndarray, jax.interpreters.xla.DeviceArray,
                           Variable)) and self._state.in_setup:
-      # namecheck to ensure named variable matches self attribute name.
-      if self._state.last_varname and self._state.last_varname != name:
-        raise ValueError(f'Variable name {self._state.last_varname} must equal'
-                         f' attribute name {name}.')
-      self._state.last_varname = None
+      if hasattr(self, name):
+        # re-assigning in "interactive mode":
+        self.reservations[name].value = val
+      else:
+        # constructing variables during `setup`:
+
+        # namecheck to ensure named variable matches self attribute name -- this
+        # is necessary so that we can reliably track which attributes correspond
+        # to which variables.
+        if self._state.last_varname and self._state.last_varname != name:
+          raise ValueError(f'Variable name {self._state.last_varname} must equal'
+                          f' attribute name {name}.')
+        self._state.last_varname = None
     # Finally, always run default __setattr__ to attach to self.__dict__.
     object.__setattr__(self, name, val)
 
@@ -352,7 +361,7 @@ class Module:
             f"trying to share submodule {self.__class__.__name__} by name "
             f"{self.name}. To share submodules, store module instances as a"
             f" Python object or as an attribute on self and reuse.")
-      self.parent._state.reservations.add(self.name)
+      self.parent._state.reservations[self.name] = self
       self.parent.children[self.name] = self
       self.scope = self.parent.scope.push(self.name)
       # TODO: find cleaner way to opt-out of core name collision check
@@ -410,10 +419,10 @@ class Module:
     if self._name_taken(name):
       raise ValueError(
           f'Name {name} already in use in {self.__class__.__name__}.')
-    self._state.reservations.add(name)
     # ephemeral state for setattr name-equality-check
     self._state.last_varname = name
     v = self.scope.variable(kind, name, init_fn, *init_args)
+    self._state.reservations[name] = v
     # TODO: find cleaner way to opt-out of core name collision check
     self.scope.reservations.remove(name)
     self.children[name] = kind
@@ -453,9 +462,9 @@ class Module:
     return self.scope.make_rng(kind)
 
   def apply(self, variables, *args, rngs=None,
-            method=None, mutable=False, **kwargs):
+            method=_default_call_method, mutable=False, **kwargs):
     """Apply module to variables and return output and modified variables."""
-    if method is None:
+    if method is _default_call_method:
       method = self.__class__.__call__
     else:
       method = get_unbound_fn(method)
@@ -463,7 +472,7 @@ class Module:
                               *args, **kwargs)
     return apply(fn, mutable=mutable)(variables, rngs=rngs)
 
-  def init_with_output(self, rngs, *args, method=None, **kwargs):
+  def init_with_output(self, rngs, *args, method=_default_call_method, **kwargs):
     """Create initialized data for module and return it with output."""
     if not isinstance(rngs, dict):
       assert rngs.shape == (2,)
@@ -471,14 +480,43 @@ class Module:
     return self.apply(
         {}, *args, rngs=rngs, method=method, mutable=True, **kwargs)
 
-  def init(self, rngs, *args, method=None, **kwargs):
-    """Create and return initialized data for module with rngs."""
-    _, v_out = self.init_with_output(rngs, *args, method=method, **kwargs)
+  def init(self, rngs, *args, method=_default_call_method, **kwargs):
+    """Return initialized variable dictionary.
+    
+    This method works in two ways:
+    1. Modules with complete shape information during construction
+       (e.g. "PyTorch style") -- just pass in top-level `rngs` that get
+       threaded in to the initializer functions of all submodules and all
+       variables.
+
+    2. Modules with shape inference (see TBD doc about how shape inference
+       works in Flax) -- in this case, in addition to RNGs, you must choose
+       a method to call via the `method` argument (that defaults to
+       `__call__`), and pass arguments to the method via `args` and `kwargs`.
+
+       TODO(avital): Add test
+    """
+    if method is None:
+      # This module doesn't use lazy initialization at all ("PyTorch style").
+      # Just clone it with a parent to give it RNGs so that we can run the
+      # initializers defined in `setup()`.
+      with Scope(variables={}, rngs=rngs).temporary() as root:
+        return self.clone(parent=root).variables
+    else:
+      # Initialize by feeding in an input batch through the whole network.
+      # Lazy initialization within forward pass methods generate the initial
+      # values of the variables. Then we return them.
+      _, v_out = self.init_with_output(rngs, *args, method=method, **kwargs)
     return v_out
 
   @property
   def variables(self):
     return self.scope.variables()
+
+  def interactive(self, variables, rngs=None):
+    variables = unfreeze(variables)
+    scope = Scope(variables, rngs)
+    return self.clone(parent=scope)
 
 
   # @contextmanager
