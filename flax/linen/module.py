@@ -303,6 +303,7 @@ class Module:
     elif isinstance(val, (np.ndarray, jax.interpreters.xla.DeviceArray,
                           Variable)) and self._state.in_setup:
       if hasattr(self, name):
+        import pdb; pdb.set_trace()
         # re-assigning in "interactive mode":
         self.reservations[name].value = val
       else:
