@@ -302,12 +302,8 @@ class Module:
     # val is a parameter array or a Variable reference class.
     # TODO: Add test that would have caught missing jnp.ndarray here
     elif isinstance(val, (jax.numpy.ndarray, np.ndarray, jax.interpreters.xla.DeviceArray,
-                          Variable)) and self._state.in_setup:
-      import pdb; pdb.set_trace()
-      if hasattr(self, name):
-        # re-assigning in "interactive mode":
-        self.reservations[name].value = val
-      else:
+                          Variable)):
+      if self._state.in_setup:
         # constructing variables during `setup`:
 
         # namecheck to ensure named variable matches self attribute name -- this
@@ -317,6 +313,10 @@ class Module:
           raise ValueError(f'Variable name {self._state.last_varname} must equal'
                           f' attribute name {name}.')
         self._state.last_varname = None
+      else:
+        # assigning in "interactive mode"
+        self._state.reservations[name].value = val
+
     # Finally, always run default __setattr__ to attach to self.__dict__.
     object.__setattr__(self, name, val)
 
