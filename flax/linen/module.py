@@ -185,14 +185,14 @@ class _ModuleInternalState:
   in_setup: bool = False
   last_varname: Optional[str] = None
   autoname_cursor: Optional[dict] = dataclasses.field(default_factory=dict)
-  reservations: Optional[dict] = dataclasses.field(default_factory=dict)
+  reservations: Optional[set] = dataclasses.field(default_factory=set)
 
   def reset(self):
     self.in_compact_method = False
     self.in_setup = False
     self.last_varname = None
     self.autoname_cursor = dict()
-    self.reservations = dict()
+    self.reservations = set()
 
 _uninitialized_module_internal_state = _ModuleInternalState(
     False, False, None, None, None)
@@ -302,20 +302,16 @@ class Module:
     # val is a parameter array or a Variable reference class.
     # TODO: Add test that would have caught missing jnp.ndarray here
     elif isinstance(val, (jax.numpy.ndarray, np.ndarray, jax.interpreters.xla.DeviceArray,
-                          Variable)):
-      if self._state.in_setup:
-        # constructing variables during `setup`:
+                          Variable)) and self._state.in_setup:
+      # constructing variables during `setup`:
 
-        # namecheck to ensure named variable matches self attribute name -- this
-        # is necessary so that we can reliably track which attributes correspond
-        # to which variables.
-        if self._state.last_varname and self._state.last_varname != name:
-          raise ValueError(f'Variable name {self._state.last_varname} must equal'
-                          f' attribute name {name}.')
-        self._state.last_varname = None
-      else:
-        # assigning in "interactive mode"
-        self._state.reservations[name].value = val
+      # namecheck to ensure named variable matches self attribute name -- this
+      # is necessary so that we can reliably track which attributes correspond
+      # to which variables.
+      if self._state.last_varname and self._state.last_varname != name:
+        raise ValueError(f'Variable name {self._state.last_varname} must equal'
+                        f' attribute name {name}.')
+      self._state.last_varname = None
 
     # Finally, always run default __setattr__ to attach to self.__dict__.
     object.__setattr__(self, name, val)
@@ -363,7 +359,7 @@ class Module:
             f"trying to share submodule {self.__class__.__name__} by name "
             f"{self.name}. To share submodules, store module instances as a"
             f" Python object or as an attribute on self and reuse.")
-      self.parent._state.reservations[self.name] = self
+      self.parent._state.reservations.add(self.name)
       self.parent.children[self.name] = self
       self.scope = self.parent.scope.push(self.name)
       # TODO: find cleaner way to opt-out of core name collision check
@@ -421,10 +417,10 @@ class Module:
     if self._name_taken(name):
       raise ValueError(
           f'Name {name} already in use in {self.__class__.__name__}.')
+    self._state.reservations.add(name)
     # ephemeral state for setattr name-equality-check
     self._state.last_varname = name
     v = self.scope.variable(kind, name, init_fn, *init_args)
-    self._state.reservations[name] = v
     # TODO: find cleaner way to opt-out of core name collision check
     self.scope.reservations.remove(name)
     self.children[name] = kind
