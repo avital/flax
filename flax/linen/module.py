@@ -220,6 +220,7 @@ class Module:
     # Set empty class defaults.
     cls._state = _uninitialized_module_internal_state
     cls.scope = None
+    cls.variables_by_name = {}
 
   @classmethod
   def _add_parent_and_name_attrs(cls):
@@ -302,16 +303,21 @@ class Module:
     # val is a parameter array or a Variable reference class.
     # TODO: Add test that would have caught missing jnp.ndarray here
     elif isinstance(val, (jax.numpy.ndarray, np.ndarray, jax.interpreters.xla.DeviceArray,
-                          Variable)) and self._state.in_setup:
-      # constructing variables during `setup`:
+                          Variable)):
+      if self._state.in_setup:
+        # constructing variables during `setup`:
 
-      # namecheck to ensure named variable matches self attribute name -- this
-      # is necessary so that we can reliably track which attributes correspond
-      # to which variables.
-      if self._state.last_varname and self._state.last_varname != name:
-        raise ValueError(f'Variable name {self._state.last_varname} must equal'
-                        f' attribute name {name}.')
-      self._state.last_varname = None
+        # namecheck to ensure named variable matches self attribute name -- this
+        # is necessary so that we can reliably track which attributes correspond
+        # to which variables.
+        if self._state.last_varname and self._state.last_varname != name:
+          raise ValueError(f'Variable name {self._state.last_varname} must equal'
+                          f' attribute name {name}.')
+        self._state.last_varname = None
+      else:
+        # assigning in "interactive mode"
+        assert isinstance(self.children[name], Variable)
+        self.children[name].value = val
 
     # Finally, always run default __setattr__ to attach to self.__dict__.
     object.__setattr__(self, name, val)
@@ -325,7 +331,7 @@ class Module:
     # or bind this Module at the top-level to variables and rngs.
 
     self._state = _ModuleInternalState()
-    self.children = dict()  # tracks child modules
+    self.children = dict()  # tracks child modules and variables
 
     # Typically we set the parent based on the dynamic module context.
     if self.parent is _unspecified_parent:
@@ -423,7 +429,7 @@ class Module:
     v = self.scope.variable(kind, name, init_fn, *init_args)
     # TODO: find cleaner way to opt-out of core name collision check
     self.scope.reservations.remove(name)
-    self.children[name] = kind
+    self.children[name] = v
     return v
 
   def param(self, name: str, init_fn: Callable[..., T], *init_args,
@@ -548,8 +554,8 @@ class Module:
   #   # and multi-method modules.
   #   if name in self.children:
   #     val = self.children[name]
-  #     if isinstance(val, str):  # variable
-  #       return self.variables[val][name]
+  #     if isinstance(val, Variable):  # variable
+  #       return val
   #     else:  # submodule
   #       val.scope = self.scope.push(name)
   #       self.scope.reservations.remove(name)
