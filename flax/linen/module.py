@@ -510,6 +510,9 @@ class Module:
       # This module doesn't use lazy initialization at all ("PyTorch style").
       # Just clone it with a parent to give it RNGs so that we can run the
       # initializers defined in `setup()`.
+      if not isinstance(rngs, dict):
+        assert rngs.shape == (2,)
+        rngs = {'params': rngs}
       with Scope(variables={}, rngs=rngs).temporary() as root:
         return self.clone(parent=root).variables
     else:
