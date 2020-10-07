@@ -315,6 +315,7 @@ class Module:
                           f' attribute name {name}.')
         self._state.last_varname = None
       else:
+        # TODO: Check if we are in "interactive mode"
         # assigning in "interactive mode"
         assert isinstance(self.children[name], Variable)
         self.children[name].value = val
@@ -548,24 +549,25 @@ class Module:
   #   """Get a view of Module variables with easy dot-syntax navigation."""
   #   return DotGetter(self.scope.variables())
 
-  # def __getattr__(self, name):
-  #   # Used for easy colab/jupyter introspection, and to provide a
-  #   # consistent top-level interface to self.<attr> for both simple
-  #   # and multi-method modules.
-  #   if name in self.children:
-  #     val = self.children[name]
-  #     if isinstance(val, Variable):  # variable
-  #       return val
-  #     else:  # submodule
-  #       val.scope = self.scope.push(name)
-  #       self.scope.reservations.remove(name)
-  #       return val
-  #   else:
-  #     raise AttributeError(
-  #         f"'{self.__class__.__name__}' object has no attribute '{name}'")
+  def __getattr__(self, name):
+    # Used for easy colab/jupyter introspection, and to provide a
+    # consistent top-level interface to self.<attr> for both simple
+    # and multi-method modules.
+    if name in self.children:
+      val = self.children[name]
+      if isinstance(val, Variable):  # variable
+        return val.value
+      else:  # submodule
+        # TODO: Understand this code.
+        val.scope = self.scope.push(name)
+        self.scope.reservations.remove(name)
+        return val
+    else:
+      raise AttributeError(
+          f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-  # def __dir__(self):
-  #   return list(self.children.keys()) + object.__dir__(self)
+  def __dir__(self):
+    return list(self.children.keys()) + object.__dir__(self)
 
   # TODO: Should this be what `clone` always does if you don't pass in an explicit
   # parent?
