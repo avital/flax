@@ -320,6 +320,11 @@ class Module:
         assert isinstance(self.children[name], Variable)
         self.children[name].value = val
 
+        # TODO: Think about whether it's OK that this doens't __setattr__.
+        # (Since __getattr__ will find it, and it avoids a problem with
+        # the logic in _name_taken)
+        return
+
     # Finally, always run default __setattr__ to attach to self.__dict__.
     object.__setattr__(self, name, val)
 
