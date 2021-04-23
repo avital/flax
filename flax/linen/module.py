@@ -548,6 +548,7 @@ class Module:
 
   def __post_init__(self):
     # DO NOT REMOVE - Marker for internal logging.
+
     # In dataclasses, __init__ is overridden to process dataclass arguments,
     # and __post_init__ is called immediately afterwards. Here, depending on the
     # type of `parent` passed to initialize the Module, we either defer 
@@ -558,7 +559,9 @@ class Module:
 
     # Typically we set the parent based on the dynamic module context.
     if self.parent is _unspecified_parent:  # pytype: disable=attribute-error
-      object.__setattr__(self, 'parent', _context.module_stack[-1])
+      dynamic_parent = _context.module_stack[-1]
+      if isinstance(dynamic_parent, Module) and dynamic_parent._state.in_compact_method:
+        object.__setattr__(self, 'parent', dynamic_parent)
 
     # Initialization is deferred for top level Modules or any other "orphan"
     # Modules until attachment by __setattr__ i.e. MyModule(..., parent=None)
@@ -567,32 +570,39 @@ class Module:
 
     # Register submodule on parent Module.
     if isinstance(self.parent, Module):
-      # When initializing an unnamed Module inside setup()
-      # initialization is deferred until attachment by __setattr__
-      # i.e. self.mymodule = MyModule(...)
-      if self.parent._state.in_setup and self.name is None:  # pytype: disable=attribute-error
-        return
-      if not self.parent._initialization_allowed:
-        raise errors.AssignSubModuleError(self.__class__.__name__)
-      # Autonaming of submodules.
-      if self.name is None:  # pytype: disable=attribute-error
-        prefix = f"{self.__class__.__name__}"
-        cursor = self.parent._state.autoname_cursor.get(prefix, 0)
-        self.name = f"{prefix}_{cursor}"
-        self.parent._state.autoname_cursor[prefix] = cursor + 1
-      if self.parent._name_taken(self.name, self):
-        parent_class = self.parent.__class__.__name__
-        raise errors.NameInUseError('submodule', self.name, parent_class)
-      self.parent._state.children[self.name] = self
-      object.__setattr__(self, 'scope', self.parent.scope.push(self.name))
+      self._register_as_submodule()
 
     # Top-level invocation with a functional Scope.
     elif isinstance(self.parent, Scope):
       object.__setattr__(self, 'scope', self.parent)
+    elif self.parent is _unspecified_parent:
+      pass
     else:
       raise ValueError("parent must be None, Module or Scope")
 
     self._state.is_initialized = True
+
+  def _register_as_submodule(self):
+    assert self.scope is None, "already registered as a submodule, or bound in some other way"
+
+    # When initializing an unnamed Module inside setup()
+    # initialization is deferred until attachment by __setattr__
+    # i.e. self.mymodule = MyModule(...)
+    if self.parent._state.in_setup and self.name is None:  # pytype: disable=attribute-error
+      return
+    if not self.parent._initialization_allowed:
+      raise errors.AssignSubModuleError(self.__class__.__name__)
+    # Autonaming of submodules.
+    if self.name is None:  # pytype: disable=attribute-error
+      prefix = f"{self.__class__.__name__}"
+      cursor = self.parent._state.autoname_cursor.get(prefix, 0)
+      self.name = f"{prefix}_{cursor}"
+      self.parent._state.autoname_cursor[prefix] = cursor + 1
+    if self.parent._name_taken(self.name, self):
+      parent_class = self.parent.__class__.__name__
+      raise errors.NameInUseError('submodule', self.name, parent_class)
+    self.parent._state.children[self.name] = self
+    object.__setattr__(self, 'scope', self.parent.scope.push(self.name))
 
   def __repr__(self):
     return _module_repr(self)
@@ -640,15 +650,19 @@ class Module:
     queue = []
     def adopt_attr_modules(cache, queue, suffix, subvalue):
       if isinstance(subvalue, Module):
-        if subvalue.parent is None:
+        print("a", subvalue.parent)
+        if subvalue.parent is None or subvalue.parent is _unspecified_parent:
           # Module was passed from outside. It needs to be cloned.
           # Outside modules are named by attachment, not an outer name.
-          object.__setattr__(subvalue, 'name', None)
+          assert subvalue.name is None
           key = id(subvalue)
           if key not in cache:
-            cache[key] = subvalue.clone()
+            print("name", name)
+            print("subvalue before", subvalue)
+            cache[key] = subvalue.clone(parent=subvalue.parent)
           subvalue = cache[key]
-        if subvalue.name is None:
+          print("subvalue after", subvalue)
+        if subvalue.parent is _unspecified_parent and subvalue.name is None:
           object.__setattr__(subvalue, 'parent', self)
           object.__setattr__(subvalue, 'name', f'{name}{suffix}')
           queue.append(subvalue)

@@ -4,6 +4,9 @@ Extracting intermediate values
 This pattern will show you how to extract intermediate values from a module.
 Let's start with this simple CNN that uses :code:`nn.compact`.
 
+See :meth:`Module.apply() <flax.linen.Module.apply>` foo
+
+
 .. testsetup::
 
   import flax.linen as nn

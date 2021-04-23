@@ -1104,7 +1104,7 @@ class ModuleTest(absltest.TestCase):
       def __call__(self, x):
         return self.proj(self.a(x))
 
-    a = A(name='foo')
+    a = A()
     b = B(a=a)
     k = jax.random.PRNGKey(0)
     x = jnp.zeros((5,5))
@@ -1129,6 +1129,7 @@ class ModuleTest(absltest.TestCase):
     class A(nn.Module):
       @nn.compact
       def __call__(self, x):
+#        import pdb; pdb.set_trace()
         counter = self.variable('counter', 'i', jnp.zeros, ())
         counter.value += 1
         x = nn.Dense(1)(x)
@@ -1144,10 +1145,12 @@ class ModuleTest(absltest.TestCase):
     x = jnp.ones((2, 2))
 
     a = A()
+    print("a.parent", a.parent)
     As = {'foo': a, 'bar': a, 'baz': a}
     b = B(As)
 
     p = b.init(key, x)
+    print("p", p)
     _, cntrs = b.apply(p, x, mutable='counter')
     ref_cntrs = freeze({
       'counter': {
@@ -1156,6 +1159,12 @@ class ModuleTest(absltest.TestCase):
           },
       },
     })
+    print("cntrs")
+    print(cntrs)
+    print("---")
+    print("ref_cntrs")
+    print(ref_cntrs)
+    system.exit(0)
     self.assertTrue(tree_equals(cntrs, ref_cntrs))
   
   def test_inner_class_def(self):
@@ -1252,11 +1261,14 @@ class ModuleTest(absltest.TestCase):
     class Foo(nn.Module):
       def setup(self):
         self.a = nn.Dense(3)
+        import pdb; pdb.set_trace()
         self.bn = nn.BatchNorm()
+        import pdb; pdb.set_trace()
         self.b = nn.Dense(1)
 
     def f(foo, x):
       x = foo.a(x)
+      import pdb; pdb.set_trace()
       x = foo.bn(x, use_running_average=False)
       return foo.b(x)
       
@@ -1264,6 +1276,7 @@ class ModuleTest(absltest.TestCase):
     x = jnp.ones((4,))
     f_init = nn.init_with_output(f, foo)
     y1, variables = f_init(random.PRNGKey(0), x)
+    import pdb; pdb.set_trace()
     foo_b = foo.bind(variables, mutable='batch_stats')
     y2 = f(foo_b, x)
     y3, new_state = nn.apply(f, foo, mutable='batch_stats')(variables, x)
@@ -1330,6 +1343,42 @@ class ModuleTest(absltest.TestCase):
     variables = Bar().init(k, x)
     y = Bar().apply(variables, x)
     self.assertEqual(y.shape, (4, 3))
+
+  def test_bind_in_setup(self):
+    class TiedAutoencoder(nn.Module):
+      in_features: 2 = int
+
+      def setup(self):
+        self.encoder = nn.Dense(4, use_bias=False)
+        # lazy init
+        initializing = self.is_mutable_collection('params')
+        if initializing:
+          self.encoder(jnp.ones((1, self.in_features)))
+
+        decoder_params = {"kernel": self.encoder.variables["params"]["kernel"].T}
+        self.decoder = nn.Dense(2, use_bias=False).bind({"params": freeze(decoder_params)})
+
+      def __call__(self, x):
+        return self.decoder(self.encoder(x))
+
+    tae = TiedAutoencoder(in_features=2)
+    init_variables = tae.init({"params": jax.random.PRNGKey(0)}, jnp.ones((1, 2)))
+    init_params = init_variables["params"]
+
+    shapes = jax.tree_map(np.shape, init_params)
+    # note that the decoder parameters aren't present -- they are computed
+    # dynamically during the forward pass, since we use `bind` before assigning
+    # to `self.decoder`
+    self.assertEqual(shapes, {'encoder': {'kernel': (2, 4)}})
+
+    def l1_loss(params):
+      x_hat = jnp.ones((1, 2))
+      return jnp.mean(jnp.abs(x_hat - tae.apply({"params": params}, x_hat)))
+    grads = jax.grad(l1_loss)(init_params)
+
+    grad_shapes = jax.tree_map(np.shape, grads)
+    self.assertEqual(grad_shapes, {'encoder': {'kernel': (2, 4)}})
+
 
 if __name__ == '__main__':
   absltest.main()
